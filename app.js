@@ -95,7 +95,7 @@ let solverWorker = createSolverWorker();
 let revealValidatorWorker = createRevealValidatorWorker();
 
 function createSolverWorker() {
-  const worker = new Worker("./solver-worker.js?v=10", { type: "module" });
+  const worker = new Worker("./solver-worker.js?v=11", { type: "module" });
   worker.addEventListener("message", handleSolverMessage);
   worker.postMessage({ type: "preload" });
   return worker;
@@ -1086,7 +1086,7 @@ function renderAnalysis() {
       protectingLevel
         ? `${protection.remaining} more numbered card${protection.remaining === 1 ? "" : "s"} must be revealed before a loss can no longer demote you. This is the lowest modeled Voltorb risk available (${formatPercent(risk, true)}).`
         : proven
-          ? `This move can still lose, but exact board-mass bounds proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
+          ? `This move can still lose, but exact board-mass bounds proved that no other first move has a higher clear chance—and no equally optimal move has lower Voltorb risk (${formatWinRange(lastResult)}).`
           : lastResult.boundsRigorous === false
             ? `This move can still lose. It is the strongest fallback estimate found within 60 seconds (${formatWinRange(lastResult)}).`
             : `This move can still lose. It starts the strongest verified winning policy found while the optimal range remains ${formatWinRange(lastResult)}.`,

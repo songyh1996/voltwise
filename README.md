@@ -26,6 +26,8 @@ Compared with the calculator at voltorbflip.com, this version adds:
 - per-action proof bounds: “optimal move proven” appears as soon as one move's
   exact lower bound meets every rival upper bound (or a panel is guaranteed
   safe);
+- lexicographic certification that minimizes immediate Voltorb risk whenever
+  multiple moves share the same maximum whole-board clear probability;
 - an optional Coins goal that compares continuing with banking the current
   payout and can recommend quitting;
 - visible warnings when the clues force a gamble;

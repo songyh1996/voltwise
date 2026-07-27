@@ -305,6 +305,9 @@ std::optional<CertifiedSearchState> CertifiedSolver::initializeSearch(
 CertifiedSolverResult CertifiedSolver::iterativeDeepening(
     const CertifiedSearchState& initialState,
     CertifiedProgressCallback onProgress) {
+    const auto freePanel = findFreePanel(initialState);
+    int lastDepth = 0;
+
     CertifiedDepthResult bestCompleted{
         rootFallbackPanel_,
         rootPolicyLower_[rootFallbackPanel_.toIndex()],
@@ -312,33 +315,161 @@ CertifiedSolverResult CertifiedSolver::iterativeDeepening(
         rootPolicyLower_[rootFallbackPanel_.toIndex()].toDouble(),
         false,
         false};
-    int lastDepth = 0;
 
-    const auto freePanel = findFreePanel(initialState);
-
-    for (int depth = 1; depth <= options_.maxDepth && !timedOut_; depth++) {
-        memo_.clear();
-        auto result = depthLimitedSearch(initialState, depth);
-        if (timedOut_) break;
-
-        bestCompleted = result;
-        lastDepth = depth;
+    if (freePanel) {
+        bestCompleted = depthLimitedSearch(initialState, 1);
+        bestCompleted.bestPanel = *freePanel;
+        bestCompleted.moveProven = true;
+        lastDepth = 1;
 
         if (onProgress) {
             onProgress({
-                freePanel ? *freePanel : result.bestPanel,
-                ratio(result.lower),
-                ratio(result.upper),
-                depth,
-                result.isExact,
-                result.moveProven || freePanel.has_value(),
+                *freePanel,
+                ratio(bestCompleted.lower),
+                ratio(bestCompleted.upper),
+                lastDepth,
+                bestCompleted.isExact,
+                true,
                 nodesEvaluated_,
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - startTime_)});
         }
+    } else {
+        const auto panels = getOrderedUnknownPanels(initialState);
+        std::vector<RootCandidate> candidates;
+        candidates.reserve(panels.size());
 
-        if (result.isExact || result.moveProven || freePanel) break;
-        checkTimeout();
+        for (const Position pos : panels) {
+            const ExactWeight lower = rootPolicyLower_[pos.toIndex()];
+            const ExactWeight upper =
+                initialState.totalWeight -
+                weightOfValue(initialState, pos, PanelValue::Voltorb);
+            candidates.push_back({
+                pos,
+                lower,
+                upper,
+                lower.toDouble(),
+                0,
+                lower == upper});
+        }
+
+        const auto summarize = [&]() {
+            ExactWeight stateLower;
+            ExactWeight stateUpper;
+            size_t selected = 0;
+
+            for (size_t index = 0; index < candidates.size(); index++) {
+                stateLower = maxWeight(stateLower, candidates[index].lower);
+                stateUpper = maxWeight(stateUpper, candidates[index].upper);
+                if (
+                    candidates[index].lower > candidates[selected].lower ||
+                    (
+                        candidates[index].lower == candidates[selected].lower &&
+                        candidates[index].estimateWeight >
+                            candidates[selected].estimateWeight)) {
+                    selected = index;
+                }
+            }
+
+            bool moveProven = false;
+            for (size_t index = 0; index < candidates.size(); index++) {
+                ExactWeight competitorUpper;
+                for (size_t other = 0; other < candidates.size(); other++) {
+                    if (other == index) continue;
+                    competitorUpper = maxWeight(
+                        competitorUpper,
+                        candidates[other].upper);
+                }
+                if (candidates[index].lower >= competitorUpper) {
+                    selected = index;
+                    moveProven = true;
+                    break;
+                }
+            }
+
+            const bool exact = stateLower == stateUpper;
+            return CertifiedDepthResult{
+                candidates[selected].pos,
+                stateLower,
+                stateUpper,
+                clampEstimate(
+                    candidates[selected].estimateWeight,
+                    stateLower,
+                    stateUpper),
+                exact,
+                moveProven || exact};
+        };
+
+        if (candidates.empty()) {
+            bestCompleted = {{0, 0}, {}, {}, 0.0, true, false};
+        } else {
+            bestCompleted = summarize();
+        }
+
+        // Best-first AND/OR refinement: deepen only the root action whose
+        // current upper bound can most strongly challenge the best proven
+        // policy floor. The transposition table persists across refinements,
+        // so deeper work reuses every compatible child state already solved.
+        while (
+            !candidates.empty() &&
+            !bestCompleted.isExact &&
+            !bestCompleted.moveProven &&
+            !checkTimeout()) {
+            const ExactWeight stateLower = bestCompleted.lower;
+            std::optional<size_t> selected;
+
+            for (size_t index = 0; index < candidates.size(); index++) {
+                const RootCandidate& candidate = candidates[index];
+                if (
+                    candidate.exact ||
+                    candidate.depth >= options_.maxDepth ||
+                    candidate.upper <= stateLower) {
+                    continue;
+                }
+                if (
+                    !selected ||
+                    candidate.upper > candidates[*selected].upper ||
+                    (
+                        candidate.upper == candidates[*selected].upper &&
+                        candidate.depth < candidates[*selected].depth)) {
+                    selected = index;
+                }
+            }
+
+            if (!selected) break;
+
+            RootCandidate& candidate = candidates[*selected];
+            candidate.depth++;
+            const auto result = evaluateRootAction(
+                initialState,
+                candidate.pos,
+                candidate.depth);
+            candidate.lower = maxWeight(candidate.lower, result.lower);
+            if (result.upper < candidate.upper) {
+                candidate.upper = result.upper;
+            }
+            candidate.estimateWeight = clampEstimate(
+                result.estimateWeight,
+                candidate.lower,
+                candidate.upper);
+            candidate.exact =
+                result.isExact || candidate.lower == candidate.upper;
+            lastDepth = std::max(lastDepth, candidate.depth);
+            bestCompleted = summarize();
+
+            if (onProgress) {
+                onProgress({
+                    bestCompleted.bestPanel,
+                    ratio(bestCompleted.lower),
+                    ratio(bestCompleted.upper),
+                    lastDepth,
+                    bestCompleted.isExact,
+                    bestCompleted.moveProven,
+                    nodesEvaluated_,
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - startTime_)});
+            }
+        }
     }
 
     const bool moveProven = freePanel.has_value() || bestCompleted.moveProven;
@@ -353,10 +484,11 @@ CertifiedSolverResult CertifiedSolver::iterativeDeepening(
     } else if (moveProven) {
         reason = "Optimal move proven by exact action bounds";
     } else if (timedOut_) {
-        reason = "Timeout with rigorous bounds at depth " +
+        reason = "Focused AND/OR timeout with rigorous bounds at depth " +
             std::to_string(lastDepth);
     } else {
-        reason = "Rigorous bounds at depth " + std::to_string(lastDepth);
+        reason = "Focused AND/OR bounds at depth " +
+            std::to_string(lastDepth);
     }
 
     return {
@@ -370,6 +502,42 @@ CertifiedSolverResult CertifiedSolver::iterativeDeepening(
         elapsed,
         lastDepth,
         reason};
+}
+
+CertifiedDepthResult CertifiedSolver::evaluateRootAction(
+    const CertifiedSearchState& state,
+    Position action,
+    int depthLimit) {
+    const ExactWeight bombWeight =
+        weightOfValue(state, action, PanelValue::Voltorb);
+    ExactWeight lower;
+    ExactWeight upper = state.totalWeight - bombWeight;
+    double estimate = 0.0;
+    bool exact = true;
+
+    for (int rawValue = 1; rawValue <= 3; rawValue++) {
+        const auto value = static_cast<PanelValue>(rawValue);
+        if (weightOfValue(state, action, value).isZero()) continue;
+
+        const auto childState = revealPanel(state, action, value);
+        const auto child = depthLimitedSearch(
+            childState,
+            std::max(0, depthLimit - 1));
+        lower += child.lower;
+        upper -= childState.totalWeight - child.upper;
+        estimate += child.estimateWeight;
+        exact = exact && child.isExact;
+
+        if (timedOut_) break;
+    }
+
+    return {
+        action,
+        lower,
+        upper,
+        clampEstimate(estimate, lower, upper),
+        exact || lower == upper,
+        false};
 }
 
 CertifiedDepthResult CertifiedSolver::depthLimitedSearch(

@@ -9,23 +9,16 @@ export function countNumberedReveals(panels) {
     ).length;
 }
 
-function panelProbability(probabilities, pos) {
-    return probabilities.panels?.find(panel =>
-        samePosition(panel.pos, pos)
-    ) ?? null;
-}
-
 /**
- * Prefer the most valuable guaranteed-safe card until enough numbered cards
- * have been revealed to prevent a level drop. A known-safe 1 is deliberately
- * included: it does not help clear the board, but it does count toward the
- * game's level-retention rule.
+ * Minimize immediate Voltorb risk until enough numbered cards have been
+ * revealed to prevent a level drop. Expected card value breaks equal-risk
+ * ties. A 1 is deliberately eligible: it does not help clear the board, but
+ * it does count toward the game's level-retention rule.
  */
 export function prioritizeLevelProtection({
     level,
     panels,
     probabilities,
-    safePanels,
     suggestedPanel,
     capped = false
 }) {
@@ -34,32 +27,44 @@ export function prioritizeLevelProtection({
     const protectedLevel = revealed >= target;
     let protectedSuggestion = suggestedPanel;
     let prioritizing = false;
+    let suggestedRisk = null;
 
-    if (!protectedLevel && !capped && safePanels.length > 0) {
+    if (!protectedLevel && !capped && probabilities.panels?.length > 0) {
+        let bestProbability = null;
         let bestScore = Number.NEGATIVE_INFINITY;
 
-        for (const pos of safePanels) {
-            const probability = panelProbability(probabilities, pos);
-            const score = probability
-                ? probability.pOne + probability.pTwo * 2 + probability.pThree * 3
-                : 0;
+        for (const probability of probabilities.panels) {
+            const score =
+                probability.pOne +
+                probability.pTwo * 2 +
+                probability.pThree * 3;
+            const lowerRisk = !bestProbability ||
+                probability.pVoltorb < bestProbability.pVoltorb - 1e-12;
+            const equalRisk = bestProbability &&
+                Math.abs(probability.pVoltorb - bestProbability.pVoltorb) <= 1e-12;
 
-            if (score > bestScore) {
+            if (lowerRisk || (equalRisk && score > bestScore)) {
+                bestProbability = probability;
                 bestScore = score;
-                protectedSuggestion = pos;
             }
         }
 
-        prioritizing = !samePosition(protectedSuggestion, suggestedPanel) ||
-            safePanels.some(pos => samePosition(pos, protectedSuggestion));
+        if (bestProbability) {
+            protectedSuggestion = bestProbability.pos;
+            suggestedRisk = bestProbability.pVoltorb;
+            prioritizing = true;
+        }
     }
 
     return {
         suggestedPanel: protectedSuggestion,
+        suggestedRisk,
         revealed,
         target,
         remaining: Math.max(0, target - revealed),
         protected: protectedLevel,
-        prioritizing
+        prioritizing,
+        overridesClear: prioritizing &&
+            !samePosition(protectedSuggestion, suggestedPanel)
     };
 }

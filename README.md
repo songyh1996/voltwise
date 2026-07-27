@@ -15,11 +15,12 @@ Compared with the calculator at voltorbflip.com, this version adds:
   impossible outcomes disabled after analysis;
 - save-state mode that keeps discovered Voltorbs on the board as exact evidence
   and immediately recalculates instead of ending the round;
-- a 60-second exact-mass WebAssembly belief-state search aimed at whole-board
-  clear probability, with a JavaScript fallback;
-- level-retention awareness that reveals every guaranteed-safe numbered card,
-  including known-safe 1s, before recommending a gamble until the current
-  level is protected;
+- a 60-second exact-mass WebAssembly belief-state search using bound-focused
+  AND/OR refinement and a persistent transposition table, with a JavaScript
+  fallback;
+- level-retention awareness that chooses the lowest-risk numbered card,
+  including known-safe 1s, before optimizing whole-board clear probability
+  until the current level is protected;
 - exact integer Bayesian board weights and collision-free memo keys, so
   heuristic estimates may order work but never prune or certify it;
 - per-action proof bounds: “optimal move proven” appears as soon as one move's

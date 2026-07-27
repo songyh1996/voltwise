@@ -142,6 +142,15 @@ private:
         bool complete = true;
     };
 
+    struct RootCandidate {
+        Position pos;
+        ExactWeight lower;
+        ExactWeight upper;
+        double estimateWeight = 0.0;
+        int depth = 0;
+        bool exact = false;
+    };
+
     CertifiedSolverOptions options_;
     std::unordered_map<uint64_t, CertifiedMemoEntry> memo_;
     std::unordered_map<uint64_t, ExactWeight> policyMemo_;
@@ -164,6 +173,10 @@ private:
         CertifiedProgressCallback onProgress);
     CertifiedDepthResult depthLimitedSearch(
         const CertifiedSearchState& state,
+        int depthLimit);
+    CertifiedDepthResult evaluateRootAction(
+        const CertifiedSearchState& state,
+        Position action,
         int depthLimit);
 
     uint64_t stateKey(const Board& board) const;

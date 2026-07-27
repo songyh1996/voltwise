@@ -95,7 +95,7 @@ let solverWorker = createSolverWorker();
 let revealValidatorWorker = createRevealValidatorWorker();
 
 function createSolverWorker() {
-  const worker = new Worker("./solver-worker.js?v=9", { type: "module" });
+  const worker = new Worker("./solver-worker.js?v=10", { type: "module" });
   worker.addEventListener("message", handleSolverMessage);
   worker.postMessage({ type: "preload" });
   return worker;
@@ -1050,7 +1050,11 @@ function renderAnalysis() {
       : "BEST AVAILABLE MOVE";
   els.moveKicker.style.color = safe ? "var(--safe)" : riskColor(risk);
   els.moveDescription.textContent = protectingLevel
-    ? `Guaranteed safe. Reveal it first: ${protection.revealed}/${protection.target} numbered cards revealed toward level protection.`
+    ? (
+      safe
+        ? `Guaranteed safe. Reveal it first: ${protection.revealed}/${protection.target} numbered cards revealed toward level protection.`
+        : `Lowest Voltorb risk remaining. Reveal it first: ${protection.revealed}/${protection.target} numbered cards revealed toward level protection.`
+    )
     : safe
       ? "This panel is never a Voltorb in any compatible board. Reveal it, then record the value."
     : `Modeled outcomes: 1 ${formatPercent(probability.pOne)}, 2 ${formatPercent(probability.pTwo)}, 3 ${formatPercent(probability.pThree)}.`;
@@ -1072,16 +1076,20 @@ function renderAnalysis() {
             : "Safe means 0% across every compatible board—not merely the lowest risk on the grid."
     );
   } else {
-    els.quality.textContent = proven ? "OPTIMAL PROVEN" : "GAMBLE";
+    els.quality.textContent = protectingLevel
+      ? "PROTECT LEVEL"
+      : proven
+        ? "OPTIMAL PROVEN"
+        : "GAMBLE";
     els.quality.className = "quality-badge risky";
     setAnalysisMessage(
-      protection && !protection.protected
-        ? `No guaranteed-safe cards remain at ${protection.revealed}/${protection.target}. This gamble maximizes the chance of clearing, but an early Voltorb can still demote you.`
+      protectingLevel
+        ? `${protection.remaining} more numbered card${protection.remaining === 1 ? "" : "s"} must be revealed before a loss can no longer demote you. This is the lowest modeled Voltorb risk available (${formatPercent(risk, true)}).`
         : proven
-        ? `This move can still lose, but exact board-mass bounds proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
-        : lastResult.boundsRigorous === false
-          ? `This move can still lose. It is the strongest fallback estimate found within 60 seconds (${formatWinRange(lastResult)}).`
-          : `This move can still lose. It starts the strongest verified winning policy found while the optimal range remains ${formatWinRange(lastResult)}.`,
+          ? `This move can still lose, but exact board-mass bounds proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
+          : lastResult.boundsRigorous === false
+            ? `This move can still lose. It is the strongest fallback estimate found within 60 seconds (${formatWinRange(lastResult)}).`
+            : `This move can still lose. It starts the strongest verified winning policy found while the optimal range remains ${formatWinRange(lastResult)}.`,
       "warning"
     );
   }

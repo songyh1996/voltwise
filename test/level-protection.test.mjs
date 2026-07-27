@@ -94,6 +94,52 @@ test("the clear solver keeps control once the current level is protected", () =>
   assert.equal(result.prioritizing, false);
 });
 
+test("an unprotected level chooses the lowest-risk gamble before clear value", () => {
+  const panels = Array.from(
+    { length: 5 },
+    () => Array(5).fill(PanelValue.Unknown)
+  );
+  for (let col = 0; col < 5; col++) {
+    panels[2][col] = col === 0 ? PanelValue.Three : PanelValue.One;
+  }
+  panels[4][2] = PanelValue.Three;
+
+  const clearSuggestion = position(0, 3);
+  const safestSuggestion = position(3, 0);
+  const result = prioritizeLevelProtection({
+    level: 8,
+    panels,
+    probabilities: {
+      panels: [
+        {
+          pos: clearSuggestion,
+          pVoltorb: 0.239,
+          pOne: 0.2,
+          pTwo: 0.4,
+          pThree: 0.161
+        },
+        {
+          pos: safestSuggestion,
+          pVoltorb: 0.129,
+          pOne: 0.871,
+          pTwo: 0,
+          pThree: 0
+        }
+      ]
+    },
+    safePanels: [],
+    suggestedPanel: clearSuggestion,
+    capped: false
+  });
+
+  assert.deepEqual(result.suggestedPanel, safestSuggestion);
+  assert.equal(result.revealed, 6);
+  assert.equal(result.remaining, 2);
+  assert.equal(result.prioritizing, true);
+  assert.equal(result.overridesClear, true);
+  assert.equal(result.suggestedRisk, 0.129);
+});
+
 test("sample-only safe cards never override a capped clear search", () => {
   const panels = Array.from(
     { length: 5 },

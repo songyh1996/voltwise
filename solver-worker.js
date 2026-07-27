@@ -8,8 +8,8 @@ import {
 } from "./docs/js/solver.js";
 import { prioritizeLevelProtection } from "./docs/js/levelProtection.js";
 
-const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=8", import.meta.url).href;
-const WASM_BINARY_URL = new URL("./docs/js/voltorb_wasm.wasm?v=8", import.meta.url).href;
+const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=9", import.meta.url).href;
+const WASM_BINARY_URL = new URL("./docs/js/voltorb_wasm.wasm?v=9", import.meta.url).href;
 
 let cancelCurrent = null;
 let wasmModulePromise = null;
@@ -95,11 +95,12 @@ function buildClearResult(
   suggestedPanel = protection.suggestedPanel;
 
   const suggestedIsSafe = safePanels.some(pos => samePosition(pos, suggestedPanel));
-  const optimalityProven = !capped && Boolean(
+  const clearOptimalityProven = !capped && Boolean(
     progress.moveProven ||
     progress.isExact ||
     suggestedIsSafe
   );
+  const optimalityProven = clearOptimalityProven && !protection.overridesClear;
 
   return {
     goal: "clear",
@@ -118,13 +119,17 @@ function buildClearResult(
     boundsRigorous: true,
     engine,
     levelProtection: protection,
-    reason: optimalityProven
+    reason: protection.prioritizing
       ? (
-        protection.prioritizing
+        protection.suggestedRisk < 1e-12
           ? "Guaranteed-safe level-protection move"
-          : suggestedIsSafe
-            ? "Guaranteed-safe move proven optimal"
-            : "Optimal move proven"
+          : "Lowest-risk level-protection move"
+      )
+      : optimalityProven
+      ? (
+        suggestedIsSafe
+          ? "Guaranteed-safe move proven optimal"
+          : "Optimal move proven"
       )
       : (progress.reason || `Depth ${progress.depth ?? 0}`)
   };
@@ -150,9 +155,13 @@ function protectFallbackResult(result, boardData) {
     optimalityProven: !result.capped && Boolean(
       result.isExact ||
       suggestedIsSafe
-    ),
+    ) && !protection.overridesClear,
     reason: protection.prioritizing
-      ? "Guaranteed-safe level-protection move"
+      ? (
+        protection.suggestedRisk < 1e-12
+          ? "Guaranteed-safe level-protection move"
+          : "Lowest-risk level-protection move"
+      )
       : result.reason
   };
 }

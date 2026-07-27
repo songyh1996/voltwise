@@ -6,6 +6,7 @@ import {
   solveCoinProgressive,
   solveProgressive
 } from "./docs/js/solver.js";
+import { prioritizeLevelProtection } from "./docs/js/levelProtection.js";
 
 const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=7", import.meta.url).href;
 const WASM_BINARY_URL = new URL("./docs/js/voltorb_wasm.wasm?v=7", import.meta.url).href;
@@ -76,12 +77,22 @@ function buildClearResult(
   compatibleCount,
   capped,
   startTime,
-  engine
+  engine,
+  boardData
 ) {
   let suggestedPanel = validSuggestedPanel(progress.bestPanel, probabilities);
   if (!suggestedPanel && safePanels.length > 0) {
     suggestedPanel = bestSafePanel(safePanels, probabilities);
   }
+  const protection = prioritizeLevelProtection({
+    level: boardData.level,
+    panels: boardData.panels,
+    probabilities,
+    safePanels,
+    suggestedPanel,
+    capped
+  });
+  suggestedPanel = protection.suggestedPanel;
 
   const suggestedIsSafe = safePanels.some(pos => samePosition(pos, suggestedPanel));
   const optimalityProven = !capped && Boolean(
@@ -106,9 +117,43 @@ function buildClearResult(
     optimalityProven,
     boundsRigorous: true,
     engine,
+    levelProtection: protection,
     reason: optimalityProven
-      ? (suggestedIsSafe ? "Guaranteed-safe move proven optimal" : "Optimal move proven")
+      ? (
+        protection.prioritizing
+          ? "Guaranteed-safe level-protection move"
+          : suggestedIsSafe
+            ? "Guaranteed-safe move proven optimal"
+            : "Optimal move proven"
+      )
       : (progress.reason || `Depth ${progress.depth ?? 0}`)
+  };
+}
+
+function protectFallbackResult(result, boardData) {
+  const protection = prioritizeLevelProtection({
+    level: boardData.level,
+    panels: boardData.panels,
+    probabilities: result.probabilities,
+    safePanels: result.safePanels ?? [],
+    suggestedPanel: result.suggestedPanel,
+    capped: result.capped
+  });
+  const suggestedIsSafe = (result.safePanels ?? []).some(
+    pos => samePosition(pos, protection.suggestedPanel)
+  );
+
+  return {
+    ...result,
+    suggestedPanel: protection.suggestedPanel,
+    levelProtection: protection,
+    optimalityProven: !result.capped && Boolean(
+      result.isExact ||
+      suggestedIsSafe
+    ),
+    reason: protection.prioritizing
+      ? "Guaranteed-safe level-protection move"
+      : result.reason
   };
 }
 
@@ -131,13 +176,11 @@ function emptyResult(startTime, engine) {
   };
 }
 
-function solveClearJS(board, token, options, fallbackReason = "") {
+function solveClearJS(board, boardData, token, options, fallbackReason = "") {
   cancelCurrent = solveProgressive(
     board,
-    result => self.postMessage({
-      type: "progress",
-      token,
-      result: {
+    result => {
+      const fallbackResult = protectFallbackResult({
         ...result,
         goal: "clear",
         engine: "JavaScript fallback",
@@ -147,12 +190,11 @@ function solveClearJS(board, token, options, fallbackReason = "") {
           result.safePanels?.some(pos => samePosition(pos, result.suggestedPanel))
         ),
         fallbackReason
-      }
-    }),
-    result => self.postMessage({
-      type: "complete",
-      token,
-      result: {
+      }, boardData);
+      self.postMessage({ type: "progress", token, result: fallbackResult });
+    },
+    result => {
+      const fallbackResult = protectFallbackResult({
         ...result,
         goal: "clear",
         engine: "JavaScript fallback",
@@ -162,8 +204,9 @@ function solveClearJS(board, token, options, fallbackReason = "") {
           result.safePanels?.some(pos => samePosition(pos, result.suggestedPanel))
         ),
         fallbackReason
-      }
-    }),
+      }, boardData);
+      self.postMessage({ type: "complete", token, result: fallbackResult });
+    },
     options.maxBoards,
     { timeout: options.timeout }
   );
@@ -206,7 +249,8 @@ async function solveClearWasm(board, boardData, token, options) {
         compatibleBoards.length,
         capped,
         startTime,
-        "Exact WASM"
+        "Exact WASM",
+        boardData
       )
     });
   };
@@ -249,7 +293,8 @@ async function solveClearWasm(board, boardData, token, options) {
     compatibleBoards.length,
     capped || Boolean(wasmResult.capped),
     startTime,
-    "Exact WASM"
+    "Exact WASM",
+    boardData
   );
   self.postMessage({ type: "complete", token, result: finalResult });
 }
@@ -297,6 +342,7 @@ self.addEventListener("message", async event => {
     } catch (wasmError) {
       solveClearJS(
         board,
+        event.data.board,
         token,
         options,
         wasmError instanceof Error ? wasmError.message : String(wasmError)

@@ -6,6 +6,7 @@ import { PanelValue } from "../docs/js/boardTypes.js";
 import {
   allMultipliersRevealed,
   calculateCurrentPayout,
+  levelAfterLoss,
   levelAfterWin
 } from "../docs/js/gameProgress.js";
 import { findAllowedRevealValues } from "../docs/js/revealOptions.js";
@@ -103,6 +104,23 @@ test("the final multiplier is detected from total extra points", () => {
   assert.equal(calculateCurrentPayout(panels), 24);
   assert.equal(levelAfterWin(5), 6);
   assert.equal(levelAfterWin(8), 8);
+});
+
+test("a loss keeps or lowers the level based on numbered cards revealed", () => {
+  const panels = Array.from({ length: 5 }, () => Array(5).fill(PanelValue.Unknown));
+
+  assert.equal(levelAfterLoss(6, panels), 1);
+
+  panels[0][0] = PanelValue.One;
+  panels[0][1] = PanelValue.Two;
+  panels[0][2] = PanelValue.Three;
+  panels[0][3] = PanelValue.Voltorb;
+  assert.equal(levelAfterLoss(6, panels), 3);
+
+  panels[0][4] = PanelValue.One;
+  panels[1][0] = PanelValue.One;
+  panels[1][1] = PanelValue.One;
+  assert.equal(levelAfterLoss(6, panels), 6);
 });
 
 test("coin branch-and-bound proves a guaranteed multiplier should be flipped", () => {

@@ -52,3 +52,8 @@ export function allMultipliersRevealed(rowHints, panels) {
 export function levelAfterWin(level) {
     return Math.min(MAX_LEVEL, Math.max(1, level + 1));
 }
+
+export function levelAfterLoss(level, panels) {
+    const revealed = panels.flat().filter(value => value >= 1 && value <= 3).length;
+    return revealed >= level ? level : Math.max(1, revealed);
+}

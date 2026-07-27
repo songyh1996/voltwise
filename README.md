@@ -15,6 +15,9 @@ Compared with the calculator at voltorbflip.com, this version adds:
   impossible outcomes disabled after analysis;
 - a 60-second exact-mass WebAssembly belief-state search aimed at whole-board
   clear probability, with a JavaScript fallback;
+- level-retention awareness that reveals every guaranteed-safe numbered card,
+  including known-safe 1s, before recommending a gamble until the current
+  level is protected;
 - exact integer Bayesian board weights and collision-free memo keys, so
   heuristic estimates may order work but never prune or certify it;
 - per-action proof bounds: “optimal move proven” appears as soon as one move's
@@ -24,7 +27,7 @@ Compared with the calculator at voltorbflip.com, this version adds:
   payout and can recommend quitting;
 - visible warnings when the clues force a gamble;
 - automatic board reset after wins and losses, with next-level progression
-  after a win;
+  after a win and reveal-count-based demotion after a loss;
 - constraint-aware reveal entry that disables impossible values while keeping
   every recorded tile editable;
 - undo, input validation, rapid keyboard clue entry, and a responsive UI;

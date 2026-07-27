@@ -1,0 +1,12 @@
+{
+  "name": "voltwise",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A level-aware Bayesian assistant for Voltorb Flip.",
+  "scripts": {
+    "dev": "node scripts/server.mjs",
+    "test": "node --test",
+    "check": "npm test"
+  }
+}

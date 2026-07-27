@@ -88,7 +88,7 @@ let solverWorker = createSolverWorker();
 let revealValidatorWorker = createRevealValidatorWorker();
 
 function createSolverWorker() {
-  const worker = new Worker("./solver-worker.js?v=5", { type: "module" });
+  const worker = new Worker("./solver-worker.js?v=7", { type: "module" });
   worker.addEventListener("message", handleSolverMessage);
   worker.postMessage({ type: "preload" });
   return worker;
@@ -802,7 +802,9 @@ function applySolverResult(result, isComplete) {
     els.boardStatus.textContent = `${result.engine ?? "Solver"} · ${result.compatibleCount.toLocaleString()} compatible boards${proof}.`;
   } else {
     els.boardStatus.classList.remove("error");
-    els.boardStatus.textContent = `${result.engine ?? "Solver"} depth ${result.depth}; tightening rigorous bounds…`;
+    els.boardStatus.textContent = result.boundsRigorous === false
+      ? `${result.engine ?? "Solver"} depth ${result.depth}; improving the fallback estimate…`
+      : `${result.engine ?? "Solver"} depth ${result.depth}; tightening exact-mass bounds…`;
   }
 }
 
@@ -825,7 +827,7 @@ function renderAnalysis() {
       setAnalysisMessage(
         goal === "coins"
           ? "Branch-and-bound is comparing a guaranteed bank value with every continuation."
-          : "WASM is deepening the search until the best move is proven or 60 seconds pass."
+          : "Exact-mass WASM is deepening until one move’s floor beats every rival ceiling."
       );
     } else if (!els.analysisMessage.classList.contains("error")) {
       setAnalysisMessage(
@@ -904,8 +906,10 @@ function renderAnalysis() {
     els.quality.className = "quality-badge risky";
     setAnalysisMessage(
       proven
-        ? `This move can still lose, but branch-and-bound proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
-        : `This move can still lose. It is the best move found within the 60-second search (${formatWinRange(lastResult)}).`,
+        ? `This move can still lose, but exact board-mass bounds proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
+        : lastResult.boundsRigorous === false
+          ? `This move can still lose. It is the strongest fallback estimate found within 60 seconds (${formatWinRange(lastResult)}).`
+          : `This move can still lose. It starts the strongest verified winning policy found while the optimal range remains ${formatWinRange(lastResult)}.`,
       "warning"
     );
   }

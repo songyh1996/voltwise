@@ -341,16 +341,17 @@ CertifiedSolverResult CertifiedSolver::iterativeDeepening(
 
         for (const Position pos : panels) {
             const ExactWeight lower = rootPolicyLower_[pos.toIndex()];
-            const ExactWeight upper =
+            const ExactWeight survival =
                 initialState.totalWeight -
                 weightOfValue(initialState, pos, PanelValue::Voltorb);
             candidates.push_back({
                 pos,
                 lower,
-                upper,
+                survival,
+                survival,
                 lower.toDouble(),
                 0,
-                lower == upper});
+                lower == survival});
         }
 
         const auto summarize = [&]() {
@@ -373,14 +374,23 @@ CertifiedSolverResult CertifiedSolver::iterativeDeepening(
 
             bool moveProven = false;
             for (size_t index = 0; index < candidates.size(); index++) {
-                ExactWeight competitorUpper;
+                bool candidateProven = true;
                 for (size_t other = 0; other < candidates.size(); other++) {
                     if (other == index) continue;
-                    competitorUpper = maxWeight(
-                        competitorUpper,
-                        candidates[other].upper);
+                    // Clear chance is primary. Immediate survival breaks only
+                    // exact ties, so a riskier tied action cannot win by order.
+                    const bool strictlyBetterClearFloor =
+                        candidates[index].lower > candidates[other].upper;
+                    const bool canOnlyTieAndIsSafer =
+                        candidates[index].lower == candidates[other].upper &&
+                        candidates[index].survival >=
+                            candidates[other].survival;
+                    if (!strictlyBetterClearFloor && !canOnlyTieAndIsSafer) {
+                        candidateProven = false;
+                        break;
+                    }
                 }
-                if (candidates[index].lower >= competitorUpper) {
+                if (candidateProven) {
                     selected = index;
                     moveProven = true;
                     break;
@@ -482,7 +492,7 @@ CertifiedSolverResult CertifiedSolver::iterativeDeepening(
     } else if (bestCompleted.isExact) {
         reason = "Exact optimal value and move proven";
     } else if (moveProven) {
-        reason = "Optimal move proven by exact action bounds";
+        reason = "Safest optimal move proven by exact action bounds";
     } else if (timedOut_) {
         reason = "Focused AND/OR timeout with rigorous bounds at depth " +
             std::to_string(lastDepth);

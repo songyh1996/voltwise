@@ -146,6 +146,7 @@ private:
         Position pos;
         ExactWeight lower;
         ExactWeight upper;
+        ExactWeight survival;
         double estimateWeight = 0.0;
         int depth = 0;
         bool exact = false;

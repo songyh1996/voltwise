@@ -277,10 +277,17 @@ a {
   gap: 6px;
 }
 
-.tile {
+.tile-wrap {
   position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tile {
   display: grid;
   place-items: center;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   overflow: hidden;
   border-radius: 10px;
@@ -378,6 +385,82 @@ a {
 .tile.value-0 {
   background: var(--red);
   box-shadow: none;
+}
+
+.quick-reveal {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .quick-reveal {
+    position: absolute;
+    z-index: 3;
+    inset: 4px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 3px;
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.94);
+    transition: opacity 100ms ease, transform 100ms ease;
+  }
+
+  .tile-wrap:hover .quick-reveal {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+  }
+
+  .tile-wrap:hover > .tile:not(.revealed) {
+    opacity: 0.12;
+  }
+
+  .quick-reveal-choice {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    padding: 0;
+    border-radius: 5px;
+    color: var(--ink);
+    background: var(--white);
+    box-shadow: 0 1px 4px rgba(23, 26, 33, 0.2);
+    cursor: pointer;
+  }
+
+  .quick-reveal-choice:hover {
+    color: var(--white);
+    background: var(--blue);
+  }
+
+  .quick-reveal-choice.value-2 {
+    background: var(--yellow);
+  }
+
+  .quick-reveal-choice.value-3 {
+    color: var(--white);
+    background: var(--blue);
+  }
+
+  .quick-reveal-choice.value-0 {
+    background: var(--red);
+  }
+
+  .quick-reveal-choice:disabled {
+    opacity: 0.18;
+    cursor: not-allowed;
+  }
+
+  .quick-orb {
+    width: 13px;
+    aspect-ratio: 1;
+    border: 2px solid var(--ink);
+    border-radius: 50%;
+    background: linear-gradient(
+      var(--red) 0 42%,
+      var(--ink) 42% 58%,
+      var(--white) 58%
+    );
+  }
 }
 
 .revealed-value {

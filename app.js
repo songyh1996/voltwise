@@ -8,6 +8,10 @@ import {
   allMultipliersRevealed,
   levelAfterWin
 } from "./docs/js/gameProgress.js";
+import {
+  autoAdvanceDelay,
+  promotePointTotal
+} from "./docs/js/clueEntry.js";
 
 const SIZE = 5;
 const UNKNOWN = PanelValue.Unknown;
@@ -179,13 +183,16 @@ function coordinate(row, col) {
 
 function createTile(row, col) {
   const value = state.panels[row][col];
+  const wrapper = document.createElement("div");
+  wrapper.className = "tile-wrap";
+  wrapper.style.gridRow = String(row + 1);
+  wrapper.style.gridColumn = String(col + 1);
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "tile";
   // Panels are mouse/touch actions, not part of the rapid clue-entry tab loop.
   button.tabIndex = -1;
-  button.style.gridRow = String(row + 1);
-  button.style.gridColumn = String(col + 1);
 
   if (value !== UNKNOWN) {
     button.classList.add("revealed", `value-${value}`);
@@ -199,7 +206,8 @@ function createTile(row, col) {
     } else {
       button.innerHTML = `<span class="revealed-value">${value}</span>`;
     }
-    return button;
+    wrapper.append(button);
+    return wrapper;
   }
 
   const probability = panelProbability(row, col);
@@ -208,7 +216,8 @@ function createTile(row, col) {
 
   if (!probability) {
     button.innerHTML = '<span class="tile-symbol" aria-hidden="true">?</span>';
-    return button;
+    wrapper.append(button, createQuickRevealOptions(row, col));
+    return wrapper;
   }
 
   const risk = probability.pVoltorb;
@@ -233,7 +242,46 @@ function createTile(row, col) {
       <span class="risk-bar" aria-hidden="true"><i></i></span>
     </span>
   `;
-  return button;
+  wrapper.append(button, createQuickRevealOptions(row, col));
+  return wrapper;
+}
+
+function createQuickRevealOptions(row, col) {
+  const options = document.createElement("div");
+  options.className = "quick-reveal";
+  options.setAttribute("aria-label", `Record ${coordinate(row, col)}`);
+
+  const immediateOptions = optionsFromCurrentResult(row, col);
+  for (const value of [1, 2, 3, 0]) {
+    const choice = document.createElement("button");
+    choice.type = "button";
+    choice.tabIndex = -1;
+    choice.className = `quick-reveal-choice value-${value}`;
+    choice.dataset.value = String(value);
+    choice.setAttribute(
+      "aria-label",
+      `${coordinate(row, col)} is ${value === 0 ? "a Voltorb" : value}`
+    );
+    choice.disabled = Boolean(
+      immediateOptions && !immediateOptions.includes(value)
+    );
+    choice.innerHTML = value === 0
+      ? '<span class="quick-orb" aria-hidden="true"></span>'
+      : `<strong>${value}</strong>`;
+    choice.addEventListener("click", event => {
+      event.stopPropagation();
+      if (!immediateOptions) {
+        openRevealDialog(row, col);
+        return;
+      }
+      targetPanel = { row, col };
+      allowedRevealValues = new Set(immediateOptions);
+      recordReveal(value);
+    });
+    options.append(choice);
+  }
+
+  return options;
 }
 
 function createHintCard(kind, index) {
@@ -273,7 +321,18 @@ function createHintCard(kind, index) {
   `;
 
   for (const input of card.querySelectorAll("input")) {
-    input.addEventListener("input", event => updateHint(kind, index, event.target.dataset.field, event.target.value));
+    input.addEventListener("input", event => {
+      const target = event.target;
+      if (
+        target.dataset.field === "voltorbCount" &&
+        promotePendingPointTotal(target, kind, index)
+      ) {
+        return;
+      }
+      updateHint(kind, index, target.dataset.field, target.value);
+      scheduleHintAutoAdvance(target);
+    });
+    input.addEventListener("blur", () => pendingPointTotal.delete(input));
     input.addEventListener("keydown", event => {
       if (event.key === "Tab") {
         event.preventDefault();
@@ -288,6 +347,58 @@ function createHintCard(kind, index) {
   }
 
   return card;
+}
+
+const hintAdvanceTimers = new WeakMap();
+const pendingPointTotal = new WeakMap();
+
+function scheduleHintAutoAdvance(input) {
+  const pending = hintAdvanceTimers.get(input);
+  if (pending) clearTimeout(pending);
+
+  const expectedValue = input.value;
+  const delay = autoAdvanceDelay(input.dataset.field, expectedValue);
+  if (delay === null) return;
+
+  const advance = () => {
+    hintAdvanceTimers.delete(input);
+    if (
+      document.activeElement === input &&
+      input.value === expectedValue
+    ) {
+      const next = focusNextHint(input);
+      if (
+        input.dataset.field === "sum" &&
+        expectedValue === "1" &&
+        next?.dataset.field === "voltorbCount"
+      ) {
+        pendingPointTotal.set(next, input);
+      }
+    }
+  };
+
+  if (delay === 0) {
+    queueMicrotask(advance);
+    return;
+  }
+  hintAdvanceTimers.set(input, setTimeout(advance, delay));
+}
+
+function promotePendingPointTotal(voltorbInput, kind, index) {
+  const sumInput = pendingPointTotal.get(voltorbInput);
+  pendingPointTotal.delete(voltorbInput);
+  if (!sumInput) return false;
+
+  const promoted = promotePointTotal(
+    BOARD_TYPES[state.level - 1],
+    voltorbInput.value
+  );
+  if (promoted === null) return false;
+
+  sumInput.value = String(promoted);
+  voltorbInput.value = "";
+  updateHint(kind, index, "sum", String(promoted));
+  return true;
 }
 
 function focusAdjacentHint(current, offset) {
@@ -332,8 +443,10 @@ function focusNextHint(current) {
   if (index >= 0 && inputs[index + 1]) {
     inputs[index + 1].focus();
     inputs[index + 1].select();
+    return inputs[index + 1];
   } else {
     els.analyze.focus();
+    return null;
   }
 }
 

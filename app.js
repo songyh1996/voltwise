@@ -49,6 +49,7 @@ const els = {
   boardStatus: document.querySelector("#board-status"),
   level: document.querySelector("#level-select"),
   demo: document.querySelector("#demo-button"),
+  saveState: document.querySelector("#save-state-button"),
   undo: document.querySelector("#undo-button"),
   reset: document.querySelector("#reset-button"),
   analyze: document.querySelector("#analyze-button"),
@@ -84,6 +85,7 @@ let requestToken = 0;
 let solving = false;
 let transitioning = false;
 let goal = "clear";
+let saveStateMode = true;
 let winResetTimer = null;
 let allowedRevealValues = new Set();
 let revealOptionsToken = 0;
@@ -93,7 +95,7 @@ let solverWorker = createSolverWorker();
 let revealValidatorWorker = createRevealValidatorWorker();
 
 function createSolverWorker() {
-  const worker = new Worker("./solver-worker.js?v=8", { type: "module" });
+  const worker = new Worker("./solver-worker.js?v=9", { type: "module" });
   worker.addEventListener("message", handleSolverMessage);
   worker.postMessage({ type: "preload" });
   return worker;
@@ -532,14 +534,6 @@ function validateState() {
     };
   }
 
-  if (state.panels.some(row => row.includes(PanelValue.Voltorb))) {
-    return {
-      ok: false,
-      message: "That reveal was a Voltorb, so this round is over. Undo if it was entered by mistake.",
-      lost: true
-    };
-  }
-
   return { ok: true, board: makeBoard() };
 }
 
@@ -708,6 +702,11 @@ function recordReveal(value) {
   updateBoardStatus();
   els.undo.disabled = history.length === 0;
 
+  if (value === PanelValue.Voltorb && !saveStateMode) {
+    showLossAndReset();
+    return;
+  }
+
   const validation = validateState();
   if (validation.ok) {
     if (allMultipliersRevealed(state.rowHints, state.panels)) {
@@ -715,9 +714,38 @@ function recordReveal(value) {
       return;
     }
     analyzeBoard();
-  } else if (validation.lost) {
-    showLossAndReset();
   }
+}
+
+function renderSaveStateMode() {
+  els.saveState.textContent = saveStateMode ? "Save on" : "Save off";
+  els.saveState.classList.toggle("mode-active", saveStateMode);
+  els.saveState.setAttribute("aria-pressed", String(saveStateMode));
+  els.saveState.title = saveStateMode
+    ? "Mapped Voltorbs stay on the board and become solver evidence"
+    : "Recording a Voltorb ends and resets the round";
+}
+
+function toggleSaveStateMode() {
+  if (transitioning) return;
+  if (
+    saveStateMode &&
+    state.panels.some(row => row.includes(PanelValue.Voltorb))
+  ) {
+    setAnalysisMessage(
+      "Reset this mapped board before turning save-state mode off.",
+      "warning"
+    );
+    return;
+  }
+
+  saveStateMode = !saveStateMode;
+  renderSaveStateMode();
+  setAnalysisMessage(
+    saveStateMode
+      ? "Save-state mode: mapped Voltorbs become exact evidence and analysis continues."
+      : "Normal play: recording a Voltorb ends and resets the round."
+  );
 }
 
 function hideWinToast() {
@@ -920,7 +948,12 @@ function applySolverResult(result, isComplete) {
   } else if (isComplete) {
     els.boardStatus.classList.remove("error");
     const proof = result.optimalityProven ? " · optimal action proven" : "";
-    els.boardStatus.textContent = `${result.engine ?? "Solver"} · ${result.compatibleCount.toLocaleString()} compatible boards${proof}.`;
+    const mappedVoltorbs = state.panels.flat()
+      .filter(value => value === PanelValue.Voltorb).length;
+    const mapped = mappedVoltorbs > 0
+      ? ` · ${mappedVoltorbs} Voltorb${mappedVoltorbs === 1 ? "" : "s"} mapped`
+      : "";
+    els.boardStatus.textContent = `${result.engine ?? "Solver"} · ${result.compatibleCount.toLocaleString()} compatible boards${mapped}${proof}.`;
   } else {
     els.boardStatus.classList.remove("error");
     els.boardStatus.textContent = result.boundsRigorous === false
@@ -1234,6 +1267,7 @@ for (const button of els.goalButtons) {
 }
 
 els.demo.addEventListener("click", loadDemo);
+els.saveState.addEventListener("click", toggleSaveStateMode);
 els.undo.addEventListener("click", undoReveal);
 els.reset.addEventListener("click", resetBoard);
 els.analyze.addEventListener("click", analyzeBoard);
@@ -1269,4 +1303,5 @@ document.addEventListener("keydown", event => {
 
 renderBoard();
 renderAnalysis();
+renderSaveStateMode();
 updateBoardStatus();

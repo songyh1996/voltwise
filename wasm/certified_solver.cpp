@@ -216,22 +216,6 @@ CertifiedSolverResult CertifiedSolver::solve(
     rootFallbackPanel_ = {0, 0};
     rootStateKey_ = 0;
 
-    const GameResult gameState = board.checkGameResult();
-    if (gameState == GameResult::Won || gameState == GameResult::Lost) {
-        const bool won = gameState == GameResult::Won;
-        return {
-            {0, 0},
-            won ? 1.0 : 0.0,
-            won ? 1.0 : 0.0,
-            true,
-            true,
-            false,
-            0,
-            std::chrono::milliseconds(0),
-            0,
-            won ? "Game already won" : "Game already lost"};
-    }
-
     auto initialState = initializeSearch(board);
     if (!initialState) {
         return {

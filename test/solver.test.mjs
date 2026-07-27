@@ -14,7 +14,8 @@ import {
   calculateProbabilities,
   generateCompatibleBoards,
   iterativeCoinDeepening,
-  panelsDontExceedConstraints
+  panelsDontExceedConstraints,
+  solve
 } from "../docs/js/solver.js";
 
 const solvedPanels = [
@@ -70,6 +71,17 @@ test("probabilities become certain when one panel remains unknown", () => {
   assert.equal(compatible.length, 1);
   assert.equal(panel.pVoltorb, 0);
   assert.equal(panel.pTwo, 1);
+});
+
+test("the JavaScript solver continues after a mapped Voltorb", () => {
+  const board = sampleBoard(false);
+  board.set(0, 3, PanelValue.Unknown);
+
+  const result = solve(board, 100, { timeout: 1000 });
+
+  assert.equal(result.compatibleCount, 1);
+  assert.deepEqual(result.suggestedPanel, { row: 0, col: 3 });
+  assert.equal(result.winProbability, 1);
 });
 
 test("reveals that exceed a clue are rejected before enumeration", () => {

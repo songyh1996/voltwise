@@ -1,0 +1,9 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8301097..80e95d1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -24,3 +24,4 @@ add_library(voltorb_lib
+     src/zobrist.cpp
+     src/transposition.cpp
++    src/certified_solver.cpp
+ )

@@ -9,10 +9,13 @@ Compared with the calculator at voltorbflip.com, this version adds:
 - level-aware board generation for Levels 1–8;
 - Bayesian weighting across the game’s ten board types per level;
 - per-panel Voltorb, 1, 2, and 3 probabilities;
-- a 60-second WebAssembly branch-and-bound search aimed at whole-board clear
-  probability, with a JavaScript fallback;
-- proof-gated results: “optimal move proven” appears only after the search
-  closes its bounds (or proves that a panel is guaranteed safe);
+- a 60-second exact-mass WebAssembly belief-state search aimed at whole-board
+  clear probability, with a JavaScript fallback;
+- exact integer Bayesian board weights and collision-free memo keys, so
+  heuristic estimates may order work but never prune or certify it;
+- per-action proof bounds: “optimal move proven” appears as soon as one move's
+  exact lower bound meets every rival upper bound (or a panel is guaranteed
+  safe);
 - an optional Coins goal that compares continuing with banking the current
   payout and can recommend quitting;
 - visible warnings when the clues force a gamble;
@@ -49,8 +52,9 @@ pinned in `scripts/build-wasm.sh`. With an Emscripten SDK installed:
 EMSDK=/path/to/emsdk bash scripts/build-wasm.sh
 ```
 
-The local patch deduplicates compatible physical boards before Bayesian
-weighting.
+The local WASM sources deduplicate compatible physical boards, assign each one
+an exact integer mass derived from the game's board-type rejection sampler, and
+use those masses for rigorous branch-and-bound certification.
 
 ## Solver note
 

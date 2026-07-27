@@ -7,7 +7,8 @@ import {
   solveProgressive
 } from "./docs/js/solver.js";
 
-const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=5", import.meta.url).href;
+const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=7", import.meta.url).href;
+const WASM_BINARY_URL = new URL("./docs/js/voltorb_wasm.wasm?v=7", import.meta.url).href;
 
 let cancelCurrent = null;
 let wasmModulePromise = null;
@@ -27,7 +28,9 @@ function hydrateBoard(data) {
 function loadWasm() {
   if (!wasmModulePromise) {
     wasmModulePromise = import(WASM_MODULE_URL)
-      .then(({ default: createModule }) => createModule())
+      .then(({ default: createModule }) => createModule({
+        locateFile: path => path.endsWith(".wasm") ? WASM_BINARY_URL : path
+      }))
       .catch(error => {
         wasmModulePromise = null;
         throw error;
@@ -81,7 +84,11 @@ function buildClearResult(
   }
 
   const suggestedIsSafe = safePanels.some(pos => samePosition(pos, suggestedPanel));
-  const optimalityProven = !capped && Boolean(progress.isExact || suggestedIsSafe);
+  const optimalityProven = !capped && Boolean(
+    progress.moveProven ||
+    progress.isExact ||
+    suggestedIsSafe
+  );
 
   return {
     goal: "clear",
@@ -95,7 +102,9 @@ function buildClearResult(
     computeTime: performance.now() - startTime,
     depth: progress.depth ?? 0,
     isExact: Boolean(progress.isExact),
+    moveProven: Boolean(progress.moveProven),
     optimalityProven,
+    boundsRigorous: true,
     engine,
     reason: optimalityProven
       ? (suggestedIsSafe ? "Guaranteed-safe move proven optimal" : "Optimal move proven")
@@ -132,6 +141,7 @@ function solveClearJS(board, token, options, fallbackReason = "") {
         ...result,
         goal: "clear",
         engine: "JavaScript fallback",
+        boundsRigorous: false,
         optimalityProven: !result.capped && Boolean(
           result.isExact ||
           result.safePanels?.some(pos => samePosition(pos, result.suggestedPanel))
@@ -146,6 +156,7 @@ function solveClearJS(board, token, options, fallbackReason = "") {
         ...result,
         goal: "clear",
         engine: "JavaScript fallback",
+        boundsRigorous: false,
         optimalityProven: !result.capped && Boolean(
           result.isExact ||
           result.safePanels?.some(pos => samePosition(pos, result.suggestedPanel))
@@ -195,7 +206,7 @@ async function solveClearWasm(board, boardData, token, options) {
         compatibleBoards.length,
         capped,
         startTime,
-        "WASM"
+        "Exact WASM"
       )
     });
   };
@@ -230,14 +241,15 @@ async function solveClearWasm(board, boardData, token, options) {
       winProbabilityUpper: wasmResult.winProbabilityUpper,
       depth: wasmResult.depth,
       isExact: wasmResult.isExact,
+      moveProven: wasmResult.moveProven,
       reason: wasmResult.reason
     },
     probabilities,
     safePanels,
     compatibleBoards.length,
-    capped,
+    capped || Boolean(wasmResult.capped),
     startTime,
-    "WASM"
+    "Exact WASM"
   );
   self.postMessage({ type: "complete", token, result: finalResult });
 }

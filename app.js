@@ -137,6 +137,8 @@ function createTile(row, col) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "tile";
+  // Panels are mouse/touch actions, not part of the rapid clue-entry tab loop.
+  button.tabIndex = -1;
   button.style.gridRow = String(row + 1);
   button.style.gridColumn = String(col + 1);
 
@@ -230,6 +232,11 @@ function createHintCard(kind, index) {
   for (const input of card.querySelectorAll("input")) {
     input.addEventListener("input", event => updateHint(kind, index, event.target.dataset.field, event.target.value));
     input.addEventListener("keydown", event => {
+      if (event.key === "Tab") {
+        event.preventDefault();
+        focusAdjacentHint(input, event.shiftKey ? -1 : 1);
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         focusNextHint(input);
@@ -238,6 +245,16 @@ function createHintCard(kind, index) {
   }
 
   return card;
+}
+
+function focusAdjacentHint(current, offset) {
+  const inputs = [...els.boardMount.querySelectorAll(".hint-card input")];
+  const index = inputs.indexOf(current);
+  if (index < 0 || inputs.length === 0) return;
+
+  const nextIndex = (index + offset + inputs.length) % inputs.length;
+  inputs[nextIndex].focus();
+  inputs[nextIndex].select();
 }
 
 function renderBoard() {

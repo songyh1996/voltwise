@@ -6,6 +6,7 @@ import {
 } from "./docs/js/boardTypes.js";
 import {
   allMultipliersRevealed,
+  levelAfterLoss,
   levelAfterWin
 } from "./docs/js/gameProgress.js";
 import {
@@ -92,7 +93,7 @@ let solverWorker = createSolverWorker();
 let revealValidatorWorker = createRevealValidatorWorker();
 
 function createSolverWorker() {
-  const worker = new Worker("./solver-worker.js?v=7", { type: "module" });
+  const worker = new Worker("./solver-worker.js?v=8", { type: "module" });
   worker.addEventListener("message", handleSolverMessage);
   worker.postMessage({ type: "preload" });
   return worker;
@@ -786,6 +787,7 @@ function showLossAndReset() {
   requestToken++;
   transitioning = true;
   const currentLevel = state.level;
+  const nextLevel = levelAfterLoss(currentLevel, state.panels);
 
   if (els.dialog.open) els.dialog.close();
   renderBoard();
@@ -793,8 +795,14 @@ function showLossAndReset() {
   els.quality.textContent = "ROUND LOST";
   els.quality.className = "quality-badge risky";
   els.boardStatus.classList.add("error");
-  els.boardStatus.textContent = `Round lost! Resetting Level ${currentLevel}…`;
-  setAnalysisMessage("That panel was a Voltorb. Loading a fresh board.");
+  els.boardStatus.textContent = nextLevel === currentLevel
+    ? `Round lost, but Level ${currentLevel} is protected. Resetting…`
+    : `Round lost! Dropping to Level ${nextLevel}…`;
+  setAnalysisMessage(
+    nextLevel === currentLevel
+      ? "Enough numbered cards were revealed to prevent a level drop."
+      : `The game demotes you to Level ${nextLevel} based on numbered cards revealed.`
+  );
 
   els.winToast.classList.add("loss");
   els.winToast.querySelector("strong").textContent = "Round lost!";
@@ -806,7 +814,7 @@ function showLossAndReset() {
     els.winToast.hidden = true;
     winResetTimer = null;
     transitioning = false;
-    replaceBoard(currentLevel, { focusFirst: true });
+    replaceBoard(nextLevel, { focusFirst: true });
   }, ROUND_MESSAGE_MS);
 }
 
@@ -992,6 +1000,8 @@ function renderAnalysis() {
   const risk = probability?.pVoltorb ?? 0;
   const proven = Boolean(lastResult.optimalityProven && !lastResult.capped);
   const safe = risk < 1e-12;
+  const protection = lastResult.levelProtection;
+  const protectingLevel = Boolean(protection?.prioritizing && !protection.protected);
 
   els.empty.hidden = true;
   els.result.hidden = false;
@@ -1000,25 +1010,41 @@ function renderAnalysis() {
   els.riskRing.style.setProperty("--risk-angle", `${Math.max(risk * 360, safe ? 360 : 2)}deg`);
   els.riskRing.style.setProperty("--ring-color", riskColor(risk));
   els.moveCoordinate.textContent = coordinate(move.row, move.col);
-  els.moveKicker.textContent = safe ? "GUARANTEED SAFE" : "BEST AVAILABLE MOVE";
+  els.moveKicker.textContent = protectingLevel
+    ? `LEVEL ${protection.target} SHIELD`
+    : safe
+      ? "GUARANTEED SAFE"
+      : "BEST AVAILABLE MOVE";
   els.moveKicker.style.color = safe ? "var(--safe)" : riskColor(risk);
-  els.moveDescription.textContent = safe
-    ? "This panel is never a Voltorb in any compatible board. Reveal it, then record the value."
+  els.moveDescription.textContent = protectingLevel
+    ? `Guaranteed safe. Reveal it first: ${protection.revealed}/${protection.target} numbered cards revealed toward level protection.`
+    : safe
+      ? "This panel is never a Voltorb in any compatible board. Reveal it, then record the value."
     : `Modeled outcomes: 1 ${formatPercent(probability.pOne)}, 2 ${formatPercent(probability.pTwo)}, 3 ${formatPercent(probability.pThree)}.`;
 
   if (safe) {
-    els.quality.textContent = proven ? "PROVEN SAFE" : "SAFE";
+    els.quality.textContent = protectingLevel
+      ? "PROTECT LEVEL"
+      : proven
+        ? "PROVEN SAFE"
+        : "SAFE";
     els.quality.className = "quality-badge safe";
     setAnalysisMessage(
       lastResult.capped
         ? "No Voltorb appeared in the analyzed board sample, but the board cap prevents a mathematical guarantee."
-        : "Safe means 0% across every compatible board—not merely the lowest risk on the grid."
+        : protectingLevel
+          ? `${protection.remaining} more numbered card${protection.remaining === 1 ? "" : "s"} must be revealed before a loss can no longer demote you. Guaranteed-safe 1s count.`
+          : protection?.protected
+            ? `Level ${protection.target} is protected (${protection.revealed}/${protection.target} numbered cards revealed). Safe means 0% across every compatible board.`
+            : "Safe means 0% across every compatible board—not merely the lowest risk on the grid."
     );
   } else {
     els.quality.textContent = proven ? "OPTIMAL PROVEN" : "GAMBLE";
     els.quality.className = "quality-badge risky";
     setAnalysisMessage(
-      proven
+      protection && !protection.protected
+        ? `No guaranteed-safe cards remain at ${protection.revealed}/${protection.target}. This gamble maximizes the chance of clearing, but an early Voltorb can still demote you.`
+        : proven
         ? `This move can still lose, but exact board-mass bounds proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
         : lastResult.boundsRigorous === false
           ? `This move can still lose. It is the strongest fallback estimate found within 60 seconds (${formatWinRange(lastResult)}).`

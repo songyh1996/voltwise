@@ -9,6 +9,10 @@ Compared with the calculator at voltorbflip.com, this version adds:
 - level-aware board generation for Levels 1–8;
 - Bayesian weighting across the game’s ten board types per level;
 - per-panel Voltorb, 1, 2, and 3 probabilities;
+- continuous clue entry that auto-advances after each number and resolves
+  level-valid double-digit totals without an extra keypress;
+- one-click hover choices for recording a revealed 1, 2, 3, or Voltorb, with
+  impossible outcomes disabled after analysis;
 - a 60-second exact-mass WebAssembly belief-state search aimed at whole-board
   clear probability, with a JavaScript fallback;
 - exact integer Bayesian board weights and collision-free memo keys, so

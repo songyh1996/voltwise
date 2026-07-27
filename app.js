@@ -159,7 +159,7 @@ function createTile(row, col) {
   button.addEventListener("click", () => openRevealDialog(row, col));
 
   if (!probability) {
-    button.innerHTML = '<span class="risk-copy"><strong>HIDDEN</strong><small>tap after reveal</small></span>';
+    button.innerHTML = '<span class="tile-symbol" aria-hidden="true">?</span>';
     return button;
   }
 
@@ -178,16 +178,11 @@ function createTile(row, col) {
     (recommendedAt(row, col) ? ", recommended move" : "")
   );
 
-  const secondary = multiplierChance < 1e-10
-    ? "skip · no multiplier"
-    : `2 ${formatPercent(probability.pTwo)} · 3 ${formatPercent(probability.pThree)}`;
-
   button.innerHTML = `
     ${recommendedAt(row, col) ? '<span class="tile-recommend" aria-hidden="true">★</span>' : ""}
     <span class="risk-copy">
       <strong>V ${formatPercent(risk, true)}</strong>
       <span class="risk-bar" aria-hidden="true"><i></i></span>
-      <small>${secondary}</small>
     </span>
   `;
   return button;
@@ -564,7 +559,7 @@ function applySolverResult(result, isComplete) {
 function renderAnalysis() {
   els.analyze.disabled = solving;
   els.analyze.classList.toggle("solving", solving);
-  els.analyze.querySelector(".button-label").textContent = solving ? "Analyzing" : "Analyze board";
+  els.analyze.querySelector(".button-label").textContent = solving ? "Analyzing" : "Analyze";
 
   if (!lastResult) {
     els.empty.hidden = false;
@@ -578,7 +573,7 @@ function renderAnalysis() {
     if (solving) {
       setAnalysisMessage("Building the exact set of boards allowed by this level and your clues…");
     } else if (!els.analysisMessage.classList.contains("error")) {
-      setAnalysisMessage("The model will clearly separate safe moves from unavoidable guesses.");
+      setAnalysisMessage("Safe means 0% across every compatible board.");
     }
     return;
   }

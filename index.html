@@ -3,225 +3,151 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#091a1b">
-  <meta name="description" content="A level-aware, probability-first Voltorb Flip calculator that tells you when a move is safe and when it is still a gamble.">
-  <title>Voltwise — Smarter Voltorb Flip Assistant</title>
-  <link rel="stylesheet" href="./styles.css">
+  <meta name="theme-color" content="#ffcb05">
+  <meta name="description" content="A level-aware probability solver for Voltorb Flip.">
+  <title>Voltwise — Voltorb Flip Solver</title>
+  <link rel="stylesheet" href="./styles.css?v=3">
 </head>
 <body>
-  <a class="skip-link" href="#calculator">Skip to calculator</a>
+  <a class="skip-link" href="#board-mount">Skip to clues</a>
 
-  <header class="site-header">
+  <header class="topbar">
     <a class="brand" href="#" aria-label="Voltwise home">
-      <span class="brand-mark" aria-hidden="true"><span></span></span>
-      <span>
-        <strong>VOLTWISE</strong>
-        <small>VOLTORB FLIP ASSISTANT</small>
-      </span>
+      <span class="pokeball" aria-hidden="true"><i></i></span>
+      <span>VOLTWISE <small>VOLTORB FLIP</small></span>
     </a>
-    <div class="header-meta">
-      <span class="local-pill"><i aria-hidden="true"></i> Runs locally</span>
-      <a href="#method">Why it’s better</a>
+
+    <div class="top-actions">
+      <label class="level-control" for="level-select">
+        <span>LV.</span>
+        <select id="level-select" aria-label="Game level">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <button id="demo-button" class="quiet-button" type="button">Demo</button>
+      <button id="undo-button" class="quiet-button" type="button" disabled>Undo</button>
+      <button id="reset-button" class="quiet-button" type="button">Reset</button>
     </div>
   </header>
 
-  <main>
-    <section class="hero" aria-labelledby="page-title">
-      <div class="hero-copy">
-        <p class="eyebrow">DECISIONS, NOT GUESSES</p>
-        <h1 id="page-title">Know the risk <em>before</em> you flip.</h1>
-        <p>
-          Enter the ten line clues, then tap each panel as you reveal it.
-          Voltwise models the real level-specific board generator and searches
-          beyond the next click.
-        </p>
+  <main class="app-shell">
+    <div class="intro">
+      <div>
+        <p>PROBABILITY SOLVER</p>
+        <h1>Flip the right tile.</h1>
       </div>
-      <div class="truth-card">
-        <span class="truth-icon" aria-hidden="true">!</span>
-        <p><strong>Honest by design.</strong> Some boards force a gamble. When that happens, you’ll see the exact modeled Voltorb risk—not a fake promise that the move is safe.</p>
-      </div>
-    </section>
+      <span><i></i> Local only</span>
+    </div>
 
-    <section class="calculator" id="calculator" aria-label="Voltorb Flip calculator">
-      <div class="workspace-card">
-        <div class="workspace-toolbar">
-          <label class="level-control" for="level-select">
-            <span>GAME LEVEL</span>
-            <select id="level-select" aria-describedby="level-help">
-              <option value="1">Level 1</option>
-              <option value="2">Level 2</option>
-              <option value="3">Level 3</option>
-              <option value="4">Level 4</option>
-              <option value="5">Level 5</option>
-              <option value="6">Level 6</option>
-              <option value="7">Level 7</option>
-              <option value="8">Level 8</option>
-            </select>
-            <small id="level-help">Match the level shown in-game</small>
-          </label>
-          <div class="toolbar-actions">
-            <button class="text-button" id="demo-button" type="button">
-              <span aria-hidden="true">◇</span> Load demo
-            </button>
-            <button class="text-button" id="undo-button" type="button" disabled>
-              <span aria-hidden="true">↶</span> Undo
-            </button>
-            <button class="text-button danger" id="reset-button" type="button">
-              <span aria-hidden="true">×</span> New board
-            </button>
-          </div>
-        </div>
-
-        <div class="board-intro">
+    <section class="solver-layout" aria-label="Voltorb Flip calculator">
+      <section class="board-panel">
+        <header class="panel-header">
           <div>
-            <p class="section-label">YOUR BOARD</p>
-            <h2>Enter every <span>Σ total</span> and <span class="voltorb-word">● Voltorb</span> count.</h2>
+            <p>BOARD</p>
+            <h2>Enter each sum and Voltorb count.</h2>
           </div>
-          <div class="board-key" aria-label="Board clue key">
-            <span><b>Σ</b> points</span>
-            <span><b class="orb-mini" aria-hidden="true"></b> Voltorbs</span>
+          <div class="clue-key" aria-label="Clue key">
+            <span><b>Σ</b> Sum</span>
+            <span><b class="voltorb-dot"></b> Voltorb</span>
           </div>
-        </div>
+        </header>
 
         <div id="board-mount" class="board-mount" aria-live="polite"></div>
 
-        <div class="board-foot">
-          <p id="board-status" class="board-status">
-            Add all ten clues to unlock analysis.
-          </p>
-          <p class="coordinate-note">Panels use row/column coordinates, starting at the top-left.</p>
-        </div>
-      </div>
+        <footer class="board-footer">
+          <p id="board-status">Add all ten line clues to unlock analysis.</p>
+          <p class="coordinate-note">Tab cycles clue fields.</p>
+        </footer>
+      </section>
 
-      <aside class="analysis-card" aria-labelledby="analysis-title">
-        <div class="analysis-heading">
-          <p class="section-label">NEXT MOVE</p>
+      <aside class="analysis-panel" aria-labelledby="analysis-title">
+        <header class="analysis-heading">
+          <p>NEXT</p>
           <span id="analysis-quality" class="quality-badge neutral">WAITING</span>
-        </div>
+        </header>
 
         <div id="recommendation-empty" class="recommendation-empty">
-          <span class="empty-orb" aria-hidden="true"><i></i></span>
-          <h2 id="analysis-title">Ready when the board is.</h2>
-          <p>Fill every clue, then run the analysis. After each reveal, the recommendation updates.</p>
+          <span aria-hidden="true">—</span>
+          <h2 id="analysis-title">Enter the clues.</h2>
+          <p>The safest move will appear here.</p>
         </div>
 
         <div id="recommendation-result" class="recommendation-result" hidden>
           <div class="risk-ring" id="risk-ring" aria-label="Voltorb risk">
             <div>
               <strong id="risk-value">0%</strong>
-              <span>VOLTORB</span>
+              <span>VOLTORB RISK</span>
             </div>
           </div>
           <div class="move-copy">
-            <p id="move-kicker">GUARANTEED SAFE</p>
+            <p id="move-kicker">SAFE</p>
             <h2 id="move-coordinate">R– C–</h2>
-            <p id="move-description">Reveal the highlighted panel, then enter what you found.</p>
+            <p id="move-description">Reveal the highlighted tile.</p>
           </div>
         </div>
 
         <div id="analysis-message" class="analysis-message" role="status" aria-live="polite">
-          The model will clearly separate safe moves from unavoidable guesses.
+          Safe means 0% across every compatible board.
         </div>
 
         <button id="analyze-button" class="primary-button" type="button">
-          <span class="button-label">Analyze board</span>
+          <span class="button-label">Analyze</span>
           <span aria-hidden="true">→</span>
         </button>
 
         <label class="search-control" for="search-mode">
-          <span>SEARCH DEPTH</span>
+          <span>SEARCH</span>
           <select id="search-mode">
-            <option value="quick">Quick · about 3 sec</option>
-            <option value="balanced" selected>Balanced · about 8 sec</option>
-            <option value="deep">Deep · up to 20 sec</option>
+            <option value="quick">Quick · 3s</option>
+            <option value="balanced" selected>Balanced · 8s</option>
+            <option value="deep">Deep · 20s</option>
           </select>
         </label>
 
         <div class="stat-grid" aria-label="Analysis statistics">
-          <div>
-            <span>Compatible boards</span>
-            <strong id="stat-boards">—</strong>
-          </div>
-          <div>
-            <span>Projected clear</span>
-            <strong id="stat-win">—</strong>
-          </div>
-          <div>
-            <span>Search result</span>
-            <strong id="stat-depth">—</strong>
-          </div>
-          <div>
-            <span>Compute time</span>
-            <strong id="stat-time">—</strong>
-          </div>
-        </div>
-
-        <div class="legend">
-          <p>RISK OVERLAY</p>
-          <div><span class="legend-swatch safe"></span> Safe <b>0%</b></div>
-          <div><span class="legend-swatch low"></span> Low <b>&lt;25%</b></div>
-          <div><span class="legend-swatch medium"></span> Risky <b>25–50%</b></div>
-          <div><span class="legend-swatch high"></span> High <b>&gt;50%</b></div>
+          <div><span>Boards</span><strong id="stat-boards">—</strong></div>
+          <div><span>Clear</span><strong id="stat-win">—</strong></div>
+          <div><span>Result</span><strong id="stat-depth">—</strong></div>
+          <div><span>Time</span><strong id="stat-time">—</strong></div>
         </div>
       </aside>
     </section>
 
-    <section class="method" id="method" aria-labelledby="method-title">
-      <div class="method-heading">
-        <p class="eyebrow">WHY THIS VERSION IS DIFFERENT</p>
-        <h2 id="method-title">Built to maximize the chance of clearing—not merely surviving one click.</h2>
-      </div>
-      <div class="method-grid">
-        <article>
-          <span>01</span>
-          <h3>Real board types</h3>
-          <p>Uses the ten generator configurations for the selected level, including the game’s “free line” restrictions.</p>
-        </article>
-        <article>
-          <span>02</span>
-          <h3>Bayesian risk</h3>
-          <p>Weights possible boards by how the game actually creates them instead of pretending every matching layout is equally likely.</p>
-        </article>
-        <article>
-          <span>03</span>
-          <h3>Multi-step search</h3>
-          <p>Looks ahead at what each possible reveal teaches us and chooses for whole-board win probability, not just lowest immediate risk.</p>
-        </article>
-      </div>
-      <p class="method-note">
-        This fan-made assistant is not affiliated with Nintendo, Game Freak, or The Pokémon Company.
-        Solver core attribution is available in <a href="./THIRD_PARTY_NOTICES.md">third-party notices</a>.
-      </p>
-    </section>
+    <footer class="site-footer">
+      <span>Level-aware Bayesian search</span>
+      <span>Fan-made · Not affiliated with Nintendo</span>
+      <a href="./THIRD_PARTY_NOTICES.md">Credits</a>
+    </footer>
   </main>
 
   <dialog id="reveal-dialog" class="reveal-dialog">
     <form method="dialog">
-      <div class="dialog-heading">
+      <header>
         <div>
-          <p class="section-label">PANEL REVEAL</p>
-          <h2 id="dialog-coordinate">What was at R1 C1?</h2>
+          <p>REVEAL</p>
+          <h2 id="dialog-coordinate">R1 C1</h2>
         </div>
         <button value="cancel" class="dialog-close" aria-label="Close">×</button>
-      </div>
+      </header>
+
       <div class="reveal-options">
-        <button class="reveal-choice one" value="1" data-value="1">
-          <strong>1</strong><span>ONE</span>
-        </button>
-        <button class="reveal-choice two" value="2" data-value="2">
-          <strong>2</strong><span>TWO</span>
-        </button>
-        <button class="reveal-choice three" value="3" data-value="3">
-          <strong>3</strong><span>THREE</span>
-        </button>
+        <button class="reveal-choice one" value="1" data-value="1"><strong>1</strong><span>ONE</span></button>
+        <button class="reveal-choice two" value="2" data-value="2"><strong>2</strong><span>TWO</span></button>
+        <button class="reveal-choice three" value="3" data-value="3"><strong>3</strong><span>THREE</span></button>
         <button class="reveal-choice voltorb-choice" value="0" data-value="0">
           <strong aria-hidden="true"><i></i></strong><span>VOLTORB</span>
         </button>
       </div>
-      <p>Choose exactly what appeared in the game. You can undo a mistaken entry.</p>
     </form>
   </dialog>
 
-  <script type="module" src="./app.js?v=2"></script>
+  <script type="module" src="./app.js?v=3"></script>
 </body>
 </html>

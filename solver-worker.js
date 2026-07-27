@@ -8,8 +8,8 @@ import {
 } from "./docs/js/solver.js";
 import { prioritizeLevelProtection } from "./docs/js/levelProtection.js";
 
-const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=7", import.meta.url).href;
-const WASM_BINARY_URL = new URL("./docs/js/voltorb_wasm.wasm?v=7", import.meta.url).href;
+const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=8", import.meta.url).href;
+const WASM_BINARY_URL = new URL("./docs/js/voltorb_wasm.wasm?v=8", import.meta.url).href;
 
 let cancelCurrent = null;
 let wasmModulePromise = null;

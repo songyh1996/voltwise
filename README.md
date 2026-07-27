@@ -13,6 +13,8 @@ Compared with the calculator at voltorbflip.com, this version adds:
   level-valid double-digit totals without an extra keypress;
 - one-click hover choices for recording a revealed 1, 2, 3, or Voltorb, with
   impossible outcomes disabled after analysis;
+- save-state mode that keeps discovered Voltorbs on the board as exact evidence
+  and immediately recalculates instead of ending the round;
 - a 60-second exact-mass WebAssembly belief-state search aimed at whole-board
   clear probability, with a JavaScript fallback;
 - level-retention awareness that reveals every guaranteed-safe numbered card,

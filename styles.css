@@ -164,6 +164,11 @@ a {
   cursor: not-allowed;
 }
 
+.quiet-button.mode-active {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
 .intro {
   display: flex;
   align-items: end;

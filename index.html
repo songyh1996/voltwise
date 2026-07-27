@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffcb05">
   <meta name="description" content="A level-aware probability solver for Voltorb Flip.">
   <title>Voltwise — Voltorb Flip Solver</title>
-  <link rel="stylesheet" href="./styles.css?v=8">
+  <link rel="stylesheet" href="./styles.css?v=9">
 </head>
 <body>
   <a class="skip-link" href="#board-mount">Skip to clues</a>
@@ -31,6 +31,14 @@
           <option value="8">8</option>
         </select>
       </label>
+      <button
+        id="save-state-button"
+        class="quiet-button mode-active"
+        type="button"
+        aria-pressed="true"
+        title="Keep mapped Voltorbs as solver evidence">
+        Save on
+      </button>
       <button id="demo-button" class="quiet-button" type="button">Demo</button>
       <button id="undo-button" class="quiet-button" type="button" disabled>Undo</button>
       <button id="reset-button" class="quiet-button" type="button">Reset</button>
@@ -153,6 +161,6 @@
     <strong>Game won!</strong>
   </div>
 
-  <script type="module" src="./app.js?v=10"></script>
+  <script type="module" src="./app.js?v=11"></script>
 </body>
 </html>

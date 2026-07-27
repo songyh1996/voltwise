@@ -357,7 +357,7 @@ a {
   color: var(--ink);
   background: var(--white);
   box-shadow: inset 0 0 0 1px var(--line);
-  cursor: default;
+  cursor: pointer;
 }
 
 .tile.revealed:hover {
@@ -686,27 +686,40 @@ a {
   to { transform: rotate(360deg); }
 }
 
-.search-control {
+.goal-control {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 9px;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 5px;
   align-items: center;
   margin-top: 10px;
 }
 
-.search-control > span {
+.goal-control > span {
+  margin-right: 4px;
   font-size: 0.51rem;
   font-weight: 900;
   letter-spacing: 0.1em;
 }
 
-.search-control select {
-  min-width: 0;
+.goal-control button {
   padding: 7px 9px;
   border: 1px solid rgba(23, 26, 33, 0.2);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.42);
   font-size: 0.64rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.goal-control button.active {
+  color: var(--white);
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.goal-control button:focus-visible {
+  outline: 3px solid rgba(255, 203, 5, 0.65);
+  outline-offset: 2px;
 }
 
 .stat-grid {
@@ -769,6 +782,43 @@ a {
   background: rgba(23, 26, 33, 0.62);
 }
 
+.win-toast {
+  position: fixed;
+  z-index: 20;
+  top: 24px;
+  left: 50%;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 12px 17px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  color: var(--white);
+  background: var(--green);
+  box-shadow: 0 10px 30px rgba(23, 26, 33, 0.2);
+  opacity: 0;
+  transform: translate(-50%, -12px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+}
+
+.win-toast[hidden] {
+  display: none;
+}
+
+.win-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.win-toast.loss {
+  background: var(--red);
+}
+
+.win-toast span {
+  color: var(--yellow);
+}
+
 .reveal-dialog form {
   padding: 22px;
 }
@@ -802,6 +852,7 @@ a {
 }
 
 .reveal-choice {
+  position: relative;
   display: grid;
   place-items: center;
   aspect-ratio: 0.9;
@@ -812,10 +863,20 @@ a {
   cursor: pointer;
 }
 
-.reveal-choice:hover,
+.reveal-choice:not(:disabled):hover,
 .reveal-choice:focus-visible {
   outline: 3px solid var(--yellow);
   outline-offset: 2px;
+}
+
+.reveal-choice.current {
+  box-shadow: inset 0 0 0 3px var(--ink);
+}
+
+.reveal-choice:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.75);
+  opacity: 0.22;
 }
 
 .reveal-choice.two {
@@ -843,6 +904,23 @@ a {
   letter-spacing: 0.08em;
 }
 
+.dialog-help {
+  min-height: 1.2em;
+  margin: 13px 2px 0;
+  color: var(--muted);
+  font-size: 0.63rem;
+  line-height: 1.45;
+}
+
+.dialog-help.checking {
+  color: var(--blue);
+}
+
+.dialog-help.error {
+  color: var(--red);
+  font-weight: 750;
+}
+
 .voltorb-choice strong {
   width: 38px;
   color: var(--ink);
@@ -867,7 +945,7 @@ a {
   }
 
   .primary-button,
-  .search-control,
+  .goal-control,
   .stat-grid {
     grid-column: 2;
   }

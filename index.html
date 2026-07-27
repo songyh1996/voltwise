@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffcb05">
   <meta name="description" content="A level-aware probability solver for Voltorb Flip.">
   <title>Voltwise — Voltorb Flip Solver</title>
-  <link rel="stylesheet" href="./styles.css?v=3">
+  <link rel="stylesheet" href="./styles.css?v=7">
 </head>
 <body>
   <a class="skip-link" href="#board-mount">Skip to clues</a>
@@ -83,7 +83,7 @@
           <div class="risk-ring" id="risk-ring" aria-label="Voltorb risk">
             <div>
               <strong id="risk-value">0%</strong>
-              <span>VOLTORB RISK</span>
+              <span id="risk-label">VOLTORB RISK</span>
             </div>
           </div>
           <div class="move-copy">
@@ -102,18 +102,15 @@
           <span aria-hidden="true">→</span>
         </button>
 
-        <label class="search-control" for="search-mode">
-          <span>SEARCH</span>
-          <select id="search-mode">
-            <option value="quick">Quick · 3s</option>
-            <option value="balanced" selected>Balanced · 8s</option>
-            <option value="deep">Deep · 20s</option>
-          </select>
-        </label>
+        <div class="goal-control" role="group" aria-label="Optimization goal">
+          <span>GOAL</span>
+          <button type="button" data-goal="clear" class="active" aria-pressed="true">Clear</button>
+          <button type="button" data-goal="coins" aria-pressed="false">Coins</button>
+        </div>
 
         <div class="stat-grid" aria-label="Analysis statistics">
           <div><span>Boards</span><strong id="stat-boards">—</strong></div>
-          <div><span>Clear</span><strong id="stat-win">—</strong></div>
+          <div><span id="stat-value-label">Clear</span><strong id="stat-win">—</strong></div>
           <div><span>Result</span><strong id="stat-depth">—</strong></div>
           <div><span>Time</span><strong id="stat-time">—</strong></div>
         </div>
@@ -131,23 +128,31 @@
     <form method="dialog">
       <header>
         <div>
-          <p>REVEAL</p>
+          <p id="dialog-kicker">REVEAL</p>
           <h2 id="dialog-coordinate">R1 C1</h2>
         </div>
         <button value="cancel" class="dialog-close" aria-label="Close">×</button>
       </header>
 
       <div class="reveal-options">
-        <button class="reveal-choice one" value="1" data-value="1"><strong>1</strong><span>ONE</span></button>
-        <button class="reveal-choice two" value="2" data-value="2"><strong>2</strong><span>TWO</span></button>
-        <button class="reveal-choice three" value="3" data-value="3"><strong>3</strong><span>THREE</span></button>
-        <button class="reveal-choice voltorb-choice" value="0" data-value="0">
+        <button type="button" class="reveal-choice one" value="1" data-value="1"><strong>1</strong><span>ONE</span></button>
+        <button type="button" class="reveal-choice two" value="2" data-value="2"><strong>2</strong><span>TWO</span></button>
+        <button type="button" class="reveal-choice three" value="3" data-value="3"><strong>3</strong><span>THREE</span></button>
+        <button type="button" class="reveal-choice voltorb-choice" value="0" data-value="0">
           <strong aria-hidden="true"><i></i></strong><span>VOLTORB</span>
         </button>
       </div>
+      <p id="dialog-help" class="dialog-help" aria-live="polite">
+        Checking every clue and recorded reveal…
+      </p>
     </form>
   </dialog>
 
-  <script type="module" src="./app.js?v=3"></script>
+  <div id="win-toast" class="win-toast" role="status" aria-live="assertive" hidden>
+    <span aria-hidden="true">★</span>
+    <strong>Game won!</strong>
+  </div>
+
+  <script type="module" src="./app.js?v=7"></script>
 </body>
 </html>

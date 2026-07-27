@@ -4,6 +4,10 @@ import {
   PanelValue,
   getTotalSum
 } from "./docs/js/boardTypes.js";
+import {
+  allMultipliersRevealed,
+  levelAfterWin
+} from "./docs/js/gameProgress.js";
 
 const SIZE = 5;
 const UNKNOWN = PanelValue.Unknown;
@@ -29,11 +33,11 @@ const DEMO = {
   ]
 };
 
-const SEARCH_OPTIONS = {
-  quick: { timeout: 3000, maxBoards: 150000 },
-  balanced: { timeout: 8000, maxBoards: 350000 },
-  deep: { timeout: 20000, maxBoards: 500000 }
-};
+const SEARCH_OPTIONS = Object.freeze({
+  timeout: 60000,
+  maxBoards: 500000
+});
+const ROUND_MESSAGE_MS = 1200;
 
 const els = {
   boardMount: document.querySelector("#board-mount"),
@@ -43,22 +47,28 @@ const els = {
   undo: document.querySelector("#undo-button"),
   reset: document.querySelector("#reset-button"),
   analyze: document.querySelector("#analyze-button"),
-  searchMode: document.querySelector("#search-mode"),
+  goalButtons: [...document.querySelectorAll("[data-goal]")],
   quality: document.querySelector("#analysis-quality"),
   empty: document.querySelector("#recommendation-empty"),
   result: document.querySelector("#recommendation-result"),
   analysisMessage: document.querySelector("#analysis-message"),
   riskRing: document.querySelector("#risk-ring"),
   riskValue: document.querySelector("#risk-value"),
+  riskLabel: document.querySelector("#risk-label"),
   moveKicker: document.querySelector("#move-kicker"),
   moveCoordinate: document.querySelector("#move-coordinate"),
   moveDescription: document.querySelector("#move-description"),
   statBoards: document.querySelector("#stat-boards"),
+  statValueLabel: document.querySelector("#stat-value-label"),
   statWin: document.querySelector("#stat-win"),
   statDepth: document.querySelector("#stat-depth"),
   statTime: document.querySelector("#stat-time"),
   dialog: document.querySelector("#reveal-dialog"),
-  dialogCoordinate: document.querySelector("#dialog-coordinate")
+  dialogKicker: document.querySelector("#dialog-kicker"),
+  dialogCoordinate: document.querySelector("#dialog-coordinate"),
+  dialogHelp: document.querySelector("#dialog-help"),
+  revealChoices: [...document.querySelectorAll(".reveal-choice")],
+  winToast: document.querySelector("#win-toast")
 };
 
 let state = freshState();
@@ -67,12 +77,47 @@ let lastResult = null;
 let targetPanel = null;
 let requestToken = 0;
 let solving = false;
+let transitioning = false;
+let goal = "clear";
+let winResetTimer = null;
+let allowedRevealValues = new Set();
+let revealOptionsToken = 0;
+let revealCheckPending = false;
 
-const solverWorker = new Worker("./solver-worker.js", { type: "module" });
+let solverWorker = createSolverWorker();
+let revealValidatorWorker = createRevealValidatorWorker();
 
-function freshState() {
+function createSolverWorker() {
+  const worker = new Worker("./solver-worker.js?v=5", { type: "module" });
+  worker.addEventListener("message", handleSolverMessage);
+  worker.postMessage({ type: "preload" });
+  return worker;
+}
+
+function cancelActiveSolve() {
+  if (!solving) return;
+  solverWorker.terminate();
+  solving = false;
+  solverWorker = createSolverWorker();
+}
+
+function createRevealValidatorWorker() {
+  const worker = new Worker("./reveal-validator-worker.js?v=6", { type: "module" });
+  worker.addEventListener("message", handleRevealValidatorMessage);
+  return worker;
+}
+
+function cancelRevealValidation() {
+  revealOptionsToken++;
+  if (!revealCheckPending) return;
+  revealValidatorWorker.terminate();
+  revealValidatorWorker = createRevealValidatorWorker();
+  revealCheckPending = false;
+}
+
+function freshState(level = 1) {
   return {
-    level: 1,
+    level,
     rowHints: EMPTY_HINTS(),
     colHints: EMPTY_HINTS(),
     panels: EMPTY_PANELS()
@@ -144,8 +189,11 @@ function createTile(row, col) {
 
   if (value !== UNKNOWN) {
     button.classList.add("revealed", `value-${value}`);
-    button.setAttribute("aria-label", `${coordinate(row, col)} revealed as ${value === 0 ? "Voltorb" : value}`);
-    button.disabled = true;
+    button.setAttribute(
+      "aria-label",
+      `${coordinate(row, col)} revealed as ${value === 0 ? "Voltorb" : value}; click to edit`
+    );
+    button.addEventListener("click", () => openRevealDialog(row, col));
     if (value === 0) {
       button.innerHTML = '<span class="revealed-orb" aria-hidden="true"><i></i></span>';
     } else {
@@ -421,17 +469,125 @@ function updateBoardStatus() {
   }
 }
 
+function cluesReadyForRevealValidation() {
+  for (const hint of [...state.rowHints, ...state.colHints]) {
+    if (validateLine(hint)) return false;
+  }
+
+  const rowSum = state.rowHints.reduce((sum, hint) => sum + hint.sum, 0);
+  const colSum = state.colHints.reduce((sum, hint) => sum + hint.sum, 0);
+  const rowVoltorbs = state.rowHints.reduce((sum, hint) => sum + hint.voltorbCount, 0);
+  const colVoltorbs = state.colHints.reduce((sum, hint) => sum + hint.voltorbCount, 0);
+  if (rowSum !== colSum || rowVoltorbs !== colVoltorbs) return false;
+
+  return BOARD_TYPES[state.level - 1].some(
+    type => type.n0 === rowVoltorbs && getTotalSum(type) === rowSum
+  );
+}
+
+function setRevealChoices(allowedValues, message, tone = "") {
+  allowedRevealValues = new Set(allowedValues);
+  const currentValue = targetPanel
+    ? state.panels[targetPanel.row][targetPanel.col]
+    : UNKNOWN;
+
+  for (const choice of els.revealChoices) {
+    const value = Number(choice.dataset.value);
+    const allowed = allowedRevealValues.has(value);
+    choice.disabled = !allowed;
+    choice.classList.toggle("current", value === currentValue);
+    choice.title = allowed
+      ? "This value fits at least one real board."
+      : "Impossible with the current clues and recorded reveals.";
+  }
+
+  els.dialogHelp.textContent = message;
+  els.dialogHelp.className = `dialog-help${tone ? ` ${tone}` : ""}`;
+}
+
+function setRevealChoicesChecking() {
+  setRevealChoices([], "Checking every clue and recorded reveal…");
+  els.dialogHelp.classList.add("checking");
+}
+
+function optionsFromCurrentResult(row, col) {
+  if (!lastResult || lastResult.capped || lastResult.compatibleCount <= 0) return null;
+  const panel = lastResult.probabilities?.panels?.find(
+    item => item.pos.row === row && item.pos.col === col
+  );
+  if (!panel) return null;
+
+  const probabilities = [
+    panel.pVoltorb,
+    panel.pOne,
+    panel.pTwo,
+    panel.pThree
+  ];
+  return probabilities
+    .map((probability, value) => ({ probability, value }))
+    .filter(item => item.probability > 1e-12)
+    .map(item => item.value);
+}
+
 function openRevealDialog(row, col) {
+  if (transitioning) return;
+  cancelRevealValidation();
+
+  const currentValue = state.panels[row][col];
   targetPanel = { row, col };
-  els.dialogCoordinate.textContent = `What was at ${coordinate(row, col)}?`;
+  els.dialogKicker.textContent = currentValue === UNKNOWN ? "REVEAL" : "EDIT";
+  els.dialogCoordinate.textContent = currentValue === UNKNOWN
+    ? `What was at ${coordinate(row, col)}?`
+    : `Change ${coordinate(row, col)}`;
+  setRevealChoicesChecking();
   els.dialog.showModal();
+
+  if (!cluesReadyForRevealValidation()) {
+    setRevealChoices(
+      [0, 1, 2, 3],
+      "Complete valid clues to filter impossible values."
+    );
+    return;
+  }
+
+  if (currentValue === UNKNOWN) {
+    const immediateOptions = optionsFromCurrentResult(row, col);
+    if (immediateOptions) {
+      setRevealChoices(
+        immediateOptions,
+        "Disabled values cannot occur on any compatible board."
+      );
+      return;
+    }
+  }
+
+  const token = ++revealOptionsToken;
+  revealCheckPending = true;
+  revealValidatorWorker.postMessage({
+    type: "reveal-options",
+    token,
+    row,
+    col,
+    board: serializeBoard(makeBoard())
+  });
 }
 
 function recordReveal(value) {
-  if (!targetPanel) return;
-  history.push(clonePanels(state.panels));
-  state.panels[targetPanel.row][targetPanel.col] = value;
+  if (!targetPanel || transitioning || !allowedRevealValues.has(value)) return;
+
+  const panel = { ...targetPanel };
+  const previousValue = state.panels[panel.row][panel.col];
+  if (els.dialog.open) els.dialog.close();
   targetPanel = null;
+  allowedRevealValues = new Set();
+  cancelRevealValidation();
+
+  if (previousValue === value) return;
+
+  cancelActiveSolve();
+  requestToken++;
+  history.push(clonePanels(state.panels));
+  state.panels[panel.row][panel.col] = value;
   lastResult = null;
   renderBoard();
   renderAnalysis();
@@ -440,30 +596,118 @@ function recordReveal(value) {
 
   const validation = validateState();
   if (validation.ok) {
+    if (allMultipliersRevealed(state.rowHints, state.panels)) {
+      showWinAndAdvance();
+      return;
+    }
     analyzeBoard();
   } else if (validation.lost) {
-    setAnalysisMessage(validation.message, "error");
-    els.quality.textContent = "ROUND LOST";
-    els.quality.className = "quality-badge risky";
+    showLossAndReset();
   }
 }
 
-function resetBoard() {
-  requestToken++;
-  solving = false;
-  state = freshState();
+function hideWinToast() {
+  if (winResetTimer !== null) {
+    clearTimeout(winResetTimer);
+    winResetTimer = null;
+  }
+  els.winToast.classList.remove("visible", "loss");
+  els.winToast.hidden = true;
+}
+
+function replaceBoard(level, { focusFirst = false } = {}) {
+  cancelRevealValidation();
+  if (els.dialog.open) els.dialog.close();
+  state = freshState(level);
   history = [];
   lastResult = null;
-  els.level.value = "1";
+  targetPanel = null;
+  els.level.value = String(level);
   els.undo.disabled = true;
   renderBoard();
   renderAnalysis();
   updateBoardStatus();
+
+  if (focusFirst) {
+    requestAnimationFrame(() => {
+      const firstInput = els.boardMount.querySelector(".hint-card input");
+      firstInput?.focus();
+      firstInput?.select();
+    });
+  }
+}
+
+function showWinAndAdvance() {
+  cancelActiveSolve();
+  requestToken++;
+  transitioning = true;
+  const nextLevel = levelAfterWin(state.level);
+
+  if (els.dialog.open) els.dialog.close();
+  renderBoard();
+  renderAnalysis();
+  els.quality.textContent = "GAME WON";
+  els.quality.className = "quality-badge safe";
+  els.boardStatus.classList.remove("error");
+  els.boardStatus.textContent = nextLevel === state.level
+    ? "Game won! Resetting Level 8…"
+    : `Game won! Advancing to Level ${nextLevel}…`;
+  setAnalysisMessage("All multipliers found. Loading the next board.");
+
+  els.winToast.classList.remove("loss");
+  els.winToast.querySelector("strong").textContent = "Game won!";
+  els.winToast.hidden = false;
+  requestAnimationFrame(() => els.winToast.classList.add("visible"));
+
+  winResetTimer = window.setTimeout(() => {
+    els.winToast.classList.remove("visible");
+    els.winToast.hidden = true;
+    winResetTimer = null;
+    transitioning = false;
+    replaceBoard(nextLevel, { focusFirst: true });
+  }, ROUND_MESSAGE_MS);
+}
+
+function showLossAndReset() {
+  cancelActiveSolve();
+  requestToken++;
+  transitioning = true;
+  const currentLevel = state.level;
+
+  if (els.dialog.open) els.dialog.close();
+  renderBoard();
+  renderAnalysis();
+  els.quality.textContent = "ROUND LOST";
+  els.quality.className = "quality-badge risky";
+  els.boardStatus.classList.add("error");
+  els.boardStatus.textContent = `Round lost! Resetting Level ${currentLevel}…`;
+  setAnalysisMessage("That panel was a Voltorb. Loading a fresh board.");
+
+  els.winToast.classList.add("loss");
+  els.winToast.querySelector("strong").textContent = "Round lost!";
+  els.winToast.hidden = false;
+  requestAnimationFrame(() => els.winToast.classList.add("visible"));
+
+  winResetTimer = window.setTimeout(() => {
+    els.winToast.classList.remove("visible", "loss");
+    els.winToast.hidden = true;
+    winResetTimer = null;
+    transitioning = false;
+    replaceBoard(currentLevel, { focusFirst: true });
+  }, ROUND_MESSAGE_MS);
+}
+
+function resetBoard() {
+  cancelActiveSolve();
+  requestToken++;
+  transitioning = false;
+  hideWinToast();
+  replaceBoard(1);
 }
 
 function loadDemo() {
+  cancelActiveSolve();
   requestToken++;
-  solving = false;
   state = {
     level: DEMO.level,
     rowHints: DEMO.rowHints.map(hint => ({ ...hint })),
@@ -482,8 +726,8 @@ function loadDemo() {
 
 function undoReveal() {
   if (!history.length) return;
+  cancelActiveSolve();
   requestToken++;
-  solving = false;
   state.panels = history.pop();
   lastResult = null;
   els.undo.disabled = history.length === 0;
@@ -494,8 +738,8 @@ function undoReveal() {
 }
 
 function invalidateAnalysis(message) {
+  cancelActiveSolve();
   requestToken++;
-  solving = false;
   lastResult = null;
   renderAnalysis();
   if (message) setAnalysisMessage(message);
@@ -511,6 +755,7 @@ function serializeBoard(board) {
 }
 
 function analyzeBoard() {
+  if (transitioning) return;
   const validation = validateState();
   if (!validation.ok) {
     setAnalysisMessage(validation.message, "error");
@@ -519,19 +764,23 @@ function analyzeBoard() {
     return;
   }
 
+  cancelActiveSolve();
   const token = ++requestToken;
-  const options = SEARCH_OPTIONS[els.searchMode.value] ?? SEARCH_OPTIONS.balanced;
+  const options = SEARCH_OPTIONS;
   solving = true;
   lastResult = null;
   renderAnalysis();
   els.boardStatus.classList.remove("error");
-  els.boardStatus.textContent = "Enumerating level-valid boards and searching future reveals…";
+  els.boardStatus.textContent = goal === "coins"
+    ? "Proving whether continuing beats banking the current payout…"
+    : "Running the 60-second WASM search for the best clear strategy…";
 
   solverWorker.postMessage({
     type: "solve",
     token,
     board: serializeBoard(validation.board),
-    options
+    options,
+    goal
   });
 }
 
@@ -549,17 +798,19 @@ function applySolverResult(result, isComplete) {
     els.boardStatus.textContent = `Analyzed a ${result.compatibleCount.toLocaleString()}-board cap. Risk values are approximate for this unusually broad state.`;
   } else if (isComplete) {
     els.boardStatus.classList.remove("error");
-    els.boardStatus.textContent = `Analysis complete across ${result.compatibleCount.toLocaleString()} compatible physical boards.`;
+    const proof = result.optimalityProven ? " · optimal action proven" : "";
+    els.boardStatus.textContent = `${result.engine ?? "Solver"} · ${result.compatibleCount.toLocaleString()} compatible boards${proof}.`;
   } else {
     els.boardStatus.classList.remove("error");
-    els.boardStatus.textContent = `Search depth ${result.depth} complete; refining the whole-board strategy…`;
+    els.boardStatus.textContent = `${result.engine ?? "Solver"} depth ${result.depth}; tightening rigorous bounds…`;
   }
 }
 
 function renderAnalysis() {
-  els.analyze.disabled = solving;
+  els.analyze.disabled = solving || transitioning;
   els.analyze.classList.toggle("solving", solving);
   els.analyze.querySelector(".button-label").textContent = solving ? "Analyzing" : "Analyze";
+  els.statValueLabel.textContent = goal === "coins" ? "Coins" : "Clear";
 
   if (!lastResult) {
     els.empty.hidden = false;
@@ -571,19 +822,36 @@ function renderAnalysis() {
     els.statDepth.textContent = "—";
     els.statTime.textContent = "—";
     if (solving) {
-      setAnalysisMessage("Building the exact set of boards allowed by this level and your clues…");
+      setAnalysisMessage(
+        goal === "coins"
+          ? "Branch-and-bound is comparing a guaranteed bank value with every continuation."
+          : "WASM is deepening the search until the best move is proven or 60 seconds pass."
+      );
     } else if (!els.analysisMessage.classList.contains("error")) {
-      setAnalysisMessage("Safe means 0% across every compatible board.");
+      setAnalysisMessage(
+        goal === "coins"
+          ? "Coin mode can recommend quitting to protect the payout already earned."
+          : "Safe means 0% across every compatible board."
+      );
     }
     return;
   }
 
   els.statBoards.textContent = lastResult.compatibleCount?.toLocaleString() ?? "0";
-  els.statWin.textContent = formatWinRange(lastResult);
-  els.statDepth.textContent = lastResult.isExact ? "Exact" : `Depth ${lastResult.depth ?? 0}`;
+  els.statWin.textContent = lastResult.goal === "coins"
+    ? formatCoinRange(lastResult)
+    : formatWinRange(lastResult);
+  els.statDepth.textContent = lastResult.optimalityProven
+    ? "Proven"
+    : (lastResult.isExact ? "Exact" : `Depth ${lastResult.depth ?? 0}`);
   els.statTime.textContent = lastResult.computeTime >= 1000
     ? `${(lastResult.computeTime / 1000).toFixed(1)}s`
     : `${Math.round(lastResult.computeTime)}ms`;
+
+  if (lastResult.goal === "coins") {
+    renderCoinAnalysis(lastResult);
+    return;
+  }
 
   if (!lastResult.suggestedPanel) {
     els.empty.hidden = false;
@@ -607,12 +875,13 @@ function renderAnalysis() {
   const move = lastResult.suggestedPanel;
   const probability = panelProbability(move.row, move.col);
   const risk = probability?.pVoltorb ?? 0;
-  const exact = Boolean(lastResult.isExact && !lastResult.capped);
+  const proven = Boolean(lastResult.optimalityProven && !lastResult.capped);
   const safe = risk < 1e-12;
 
   els.empty.hidden = true;
   els.result.hidden = false;
   els.riskValue.textContent = formatPercent(risk, true);
+  els.riskLabel.textContent = "VOLTORB RISK";
   els.riskRing.style.setProperty("--risk-angle", `${Math.max(risk * 360, safe ? 360 : 2)}deg`);
   els.riskRing.style.setProperty("--ring-color", riskColor(risk));
   els.moveCoordinate.textContent = coordinate(move.row, move.col);
@@ -623,7 +892,7 @@ function renderAnalysis() {
     : `Modeled outcomes: 1 ${formatPercent(probability.pOne)}, 2 ${formatPercent(probability.pTwo)}, 3 ${formatPercent(probability.pThree)}.`;
 
   if (safe) {
-    els.quality.textContent = exact ? "PROVEN SAFE" : "SAFE";
+    els.quality.textContent = proven ? "PROVEN SAFE" : "SAFE";
     els.quality.className = "quality-badge safe";
     setAnalysisMessage(
       lastResult.capped
@@ -631,13 +900,83 @@ function renderAnalysis() {
         : "Safe means 0% across every compatible board—not merely the lowest risk on the grid."
     );
   } else {
-    els.quality.textContent = exact ? "EXACT GAMBLE" : "GAMBLE";
+    els.quality.textContent = proven ? "OPTIMAL PROVEN" : "GAMBLE";
     els.quality.className = "quality-badge risky";
     setAnalysisMessage(
-      `This move can still lose. It is recommended because it gives the best modeled chance of eventually clearing the board (${formatWinRange(lastResult)}).`,
+      proven
+        ? `This move can still lose, but branch-and-bound proved that no other first move has a higher clear chance (${formatWinRange(lastResult)}).`
+        : `This move can still lose. It is the best move found within the 60-second search (${formatWinRange(lastResult)}).`,
       "warning"
     );
   }
+}
+
+function renderCoinAnalysis(result) {
+  const current = Math.round(result.currentPayout ?? 0);
+  const lower = Math.round(result.expectedCoinsLower ?? current);
+  const upper = Math.round(result.expectedCoinsUpper ?? lower);
+  const proven = Boolean(result.optimalityProven && !result.capped);
+
+  if (result.decision === "quit") {
+    els.empty.hidden = true;
+    els.result.hidden = false;
+    els.riskValue.textContent = current.toLocaleString();
+    els.riskLabel.textContent = "COINS BANKED";
+    els.riskRing.style.setProperty("--risk-angle", "360deg");
+    els.riskRing.style.setProperty("--ring-color", "var(--safe)");
+    els.moveKicker.textContent = proven ? "BANKING IS OPTIMAL" : "BANKING IS SAFEST";
+    els.moveKicker.style.color = "var(--safe)";
+    els.moveCoordinate.textContent = "QUIT";
+    els.moveDescription.textContent = proven
+      ? `Every continuation is worth at most ${upper.toLocaleString()} expected coins; banking keeps ${current.toLocaleString()}.`
+      : `Bank ${current.toLocaleString()} coins now. Continuing is still bounded at ${lower.toLocaleString()}–${upper.toLocaleString()}.`;
+    els.quality.textContent = proven ? "QUIT PROVEN" : "CONSIDER QUIT";
+    els.quality.className = "quality-badge safe";
+    setAnalysisMessage(
+      proven
+        ? "Rigorous branch-and-bound proved that quitting maximizes expected coins from this state."
+        : "The search currently favors quitting, but has not closed every continuation bound."
+    );
+    return;
+  }
+
+  if (!result.suggestedPanel) {
+    els.empty.hidden = false;
+    els.result.hidden = true;
+    els.empty.querySelector("h2").textContent = "No matching board.";
+    els.empty.querySelector("p").textContent = "One or more clues or reveals conflict.";
+    els.quality.textContent = "CHECK INPUT";
+    els.quality.className = "quality-badge risky";
+    setAnalysisMessage("The model found zero legal boards for this evidence.", "error");
+    return;
+  }
+
+  const move = result.suggestedPanel;
+  const probability = panelProbability(move.row, move.col);
+  const risk = probability?.pVoltorb ?? 0;
+  const safe = risk < 1e-12;
+
+  els.empty.hidden = true;
+  els.result.hidden = false;
+  els.riskValue.textContent = formatPercent(risk, true);
+  els.riskLabel.textContent = "VOLTORB RISK";
+  els.riskRing.style.setProperty("--risk-angle", `${Math.max(risk * 360, safe ? 360 : 2)}deg`);
+  els.riskRing.style.setProperty("--ring-color", riskColor(risk));
+  els.moveCoordinate.textContent = coordinate(move.row, move.col);
+  els.moveKicker.textContent = safe ? "FREE VALUE" : "CONTINUE";
+  els.moveKicker.style.color = safe ? "var(--safe)" : riskColor(risk);
+  els.moveDescription.textContent =
+    `Bank now: ${current.toLocaleString()} · Continue value: ${lower.toLocaleString()}–${upper.toLocaleString()} coins.`;
+  els.quality.textContent = proven
+    ? (safe ? "PROVEN SAFE" : "OPTIMAL PROVEN")
+    : "COIN SEARCH";
+  els.quality.className = `quality-badge ${safe ? "safe" : "risky"}`;
+  setAnalysisMessage(
+    proven
+      ? "Branch-and-bound proved this action maximizes expected coins, including the option to quit later."
+      : "The current recommendation has the strongest guaranteed coin value found so far.",
+    safe ? "" : "warning"
+  );
 }
 
 function formatWinRange(result) {
@@ -654,12 +993,22 @@ function formatWinRange(result) {
   return formatPercent(lower);
 }
 
+function formatCoinRange(result) {
+  const lower = result.expectedCoinsLower;
+  const upper = result.expectedCoinsUpper;
+  if (!Number.isFinite(lower)) return "—";
+  if (Number.isFinite(upper) && Math.abs(upper - lower) >= 0.5) {
+    return `${Math.round(lower).toLocaleString()}–${Math.round(upper).toLocaleString()}`;
+  }
+  return Math.round(lower).toLocaleString();
+}
+
 function setAnalysisMessage(message, tone = "") {
   els.analysisMessage.textContent = message;
   els.analysisMessage.className = `analysis-message${tone ? ` ${tone}` : ""}`;
 }
 
-solverWorker.addEventListener("message", event => {
+function handleSolverMessage(event) {
   const { type, token, result, error } = event.data;
   if (token !== requestToken) return;
 
@@ -674,9 +1023,44 @@ solverWorker.addEventListener("message", event => {
     els.boardStatus.classList.add("error");
     els.boardStatus.textContent = "Analysis failed. Your board entries are still intact.";
   }
-});
+}
+
+function handleRevealValidatorMessage(event) {
+  const { type, token, allowedValues, error } = event.data;
+  if (token !== revealOptionsToken || !targetPanel || !els.dialog.open) return;
+
+  revealCheckPending = false;
+  if (type === "reveal-options-error") {
+    setRevealChoices(
+      [],
+      error
+        ? `Could not verify this tile: ${error}`
+        : "Could not verify this tile. Close it and try again.",
+      "error"
+    );
+    return;
+  }
+
+  if (allowedValues.length === 0) {
+    setRevealChoices(
+      [],
+      "No value repairs the board here. Edit another revealed tile or use Undo.",
+      "error"
+    );
+    return;
+  }
+
+  setRevealChoices(
+    allowedValues,
+    "Disabled values cannot occur on any compatible board."
+  );
+}
 
 els.level.addEventListener("change", () => {
+  if (transitioning) {
+    els.level.value = String(state.level);
+    return;
+  }
   state.level = Number(els.level.value);
   history = [];
   els.undo.disabled = true;
@@ -684,21 +1068,60 @@ els.level.addEventListener("change", () => {
   updateBoardStatus();
 });
 
-els.searchMode.addEventListener("change", () => {
-  if (validateState().ok && lastResult) analyzeBoard();
-});
+for (const button of els.goalButtons) {
+  button.addEventListener("click", () => {
+    const nextGoal = button.dataset.goal;
+    if (nextGoal === goal || transitioning) return;
+
+    goal = nextGoal;
+    for (const goalButton of els.goalButtons) {
+      const active = goalButton.dataset.goal === goal;
+      goalButton.classList.toggle("active", active);
+      goalButton.setAttribute("aria-pressed", String(active));
+    }
+
+    const shouldAnalyze = validateState().ok && Boolean(lastResult || solving);
+    invalidateAnalysis(
+      goal === "coins"
+        ? "Coin mode weighs continuing against banking the current payout."
+        : "Clear mode maximizes the probability of finding every multiplier."
+    );
+    if (shouldAnalyze) analyzeBoard();
+  });
+}
 
 els.demo.addEventListener("click", loadDemo);
 els.undo.addEventListener("click", undoReveal);
 els.reset.addEventListener("click", resetBoard);
 els.analyze.addEventListener("click", analyzeBoard);
 
-for (const choice of document.querySelectorAll(".reveal-choice")) {
+for (const choice of els.revealChoices) {
   choice.addEventListener("click", () => recordReveal(Number(choice.dataset.value)));
 }
 
 els.dialog.addEventListener("click", event => {
   if (event.target === els.dialog) els.dialog.close();
+});
+
+els.dialog.addEventListener("close", () => {
+  targetPanel = null;
+  allowedRevealValues = new Set();
+  cancelRevealValidation();
+});
+
+document.addEventListener("keydown", event => {
+  if (event.key !== "Tab" || event.defaultPrevented || els.dialog.open) return;
+
+  const inputs = [...els.boardMount.querySelectorAll(".hint-card input")];
+  if (inputs.length === 0) return;
+
+  event.preventDefault();
+  const currentIndex = inputs.indexOf(document.activeElement);
+  const nextIndex = currentIndex < 0
+    ? (event.shiftKey ? inputs.length - 1 : 0)
+    : (currentIndex + (event.shiftKey ? -1 : 1) + inputs.length) % inputs.length;
+  inputs[nextIndex].focus();
+  inputs[nextIndex].select();
 });
 
 renderBoard();

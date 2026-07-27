@@ -1,7 +1,16 @@
 import { Board } from "./docs/js/board.js";
-import { solveProgressive } from "./docs/js/solver.js";
+import {
+  calculateProbabilities,
+  findSafePanels,
+  generateCompatibleBoards,
+  solveCoinProgressive,
+  solveProgressive
+} from "./docs/js/solver.js";
+
+const WASM_MODULE_URL = new URL("./docs/js/solver-wasm.js?v=5", import.meta.url).href;
 
 let cancelCurrent = null;
+let wasmModulePromise = null;
 
 function hydrateBoard(data) {
   const board = new Board(data.level);
@@ -15,21 +24,272 @@ function hydrateBoard(data) {
   return board;
 }
 
-self.addEventListener("message", event => {
+function loadWasm() {
+  if (!wasmModulePromise) {
+    wasmModulePromise = import(WASM_MODULE_URL)
+      .then(({ default: createModule }) => createModule())
+      .catch(error => {
+        wasmModulePromise = null;
+        throw error;
+      });
+  }
+  return wasmModulePromise;
+}
+
+function validSuggestedPanel(suggestedPanel, probabilities) {
+  if (!suggestedPanel) return null;
+  const valid = probabilities.panels.some(panel =>
+    panel.pos.row === suggestedPanel.row &&
+    panel.pos.col === suggestedPanel.col
+  );
+  return valid ? suggestedPanel : null;
+}
+
+function samePosition(left, right) {
+  return left?.row === right?.row && left?.col === right?.col;
+}
+
+function bestSafePanel(safePanels, probabilities) {
+  let best = safePanels[0] ?? null;
+  let bestScore = -1;
+
+  for (const pos of safePanels) {
+    const panel = probabilities.panels.find(item => samePosition(item.pos, pos));
+    if (!panel) continue;
+    const score = panel.pOne + panel.pTwo * 2 + panel.pThree * 3;
+    if (score > bestScore) {
+      best = pos;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function buildClearResult(
+  progress,
+  probabilities,
+  safePanels,
+  compatibleCount,
+  capped,
+  startTime,
+  engine
+) {
+  let suggestedPanel = validSuggestedPanel(progress.bestPanel, probabilities);
+  if (!suggestedPanel && safePanels.length > 0) {
+    suggestedPanel = bestSafePanel(safePanels, probabilities);
+  }
+
+  const suggestedIsSafe = safePanels.some(pos => samePosition(pos, suggestedPanel));
+  const optimalityProven = !capped && Boolean(progress.isExact || suggestedIsSafe);
+
+  return {
+    goal: "clear",
+    suggestedPanel,
+    winProbability: progress.winProbability,
+    winProbabilityUpper: progress.winProbabilityUpper,
+    probabilities,
+    safePanels,
+    compatibleCount,
+    capped,
+    computeTime: performance.now() - startTime,
+    depth: progress.depth ?? 0,
+    isExact: Boolean(progress.isExact),
+    optimalityProven,
+    engine,
+    reason: optimalityProven
+      ? (suggestedIsSafe ? "Guaranteed-safe move proven optimal" : "Optimal move proven")
+      : (progress.reason || `Depth ${progress.depth ?? 0}`)
+  };
+}
+
+function emptyResult(startTime, engine) {
+  return {
+    goal: "clear",
+    suggestedPanel: null,
+    winProbability: 0,
+    winProbabilityUpper: 0,
+    probabilities: { panels: [], typeProbs: [], totalCompatible: 0 },
+    safePanels: [],
+    compatibleCount: 0,
+    capped: false,
+    computeTime: performance.now() - startTime,
+    depth: 0,
+    isExact: true,
+    optimalityProven: false,
+    engine,
+    reason: "No compatible boards"
+  };
+}
+
+function solveClearJS(board, token, options, fallbackReason = "") {
+  cancelCurrent = solveProgressive(
+    board,
+    result => self.postMessage({
+      type: "progress",
+      token,
+      result: {
+        ...result,
+        goal: "clear",
+        engine: "JavaScript fallback",
+        optimalityProven: !result.capped && Boolean(
+          result.isExact ||
+          result.safePanels?.some(pos => samePosition(pos, result.suggestedPanel))
+        ),
+        fallbackReason
+      }
+    }),
+    result => self.postMessage({
+      type: "complete",
+      token,
+      result: {
+        ...result,
+        goal: "clear",
+        engine: "JavaScript fallback",
+        optimalityProven: !result.capped && Boolean(
+          result.isExact ||
+          result.safePanels?.some(pos => samePosition(pos, result.suggestedPanel))
+        ),
+        fallbackReason
+      }
+    }),
+    options.maxBoards,
+    { timeout: options.timeout }
+  );
+}
+
+async function solveClearWasm(board, boardData, token, options) {
+  const startTime = performance.now();
+  const module = await loadWasm();
+
+  // Keep probability enumeration in our corrected JS model. The WASM engine
+  // performs the deep tree search; JS supplies the deduplicated Bayesian UI
+  // probabilities and proof gate.
+  const compatibleBoards = generateCompatibleBoards(board, options.maxBoards);
+  const capped = compatibleBoards.length >= options.maxBoards;
+  if (compatibleBoards.length === 0) {
+    self.postMessage({
+      type: "complete",
+      token,
+      result: emptyResult(startTime, "WASM")
+    });
+    return;
+  }
+
+  const probabilities = calculateProbabilities(board, compatibleBoards);
+  const safePanels = findSafePanels(board, compatibleBoards);
+  const panels = boardData.panels.flat();
+  const rowSums = boardData.rowHints.map(hint => hint.sum);
+  const rowVoltorbs = boardData.rowHints.map(hint => hint.voltorbCount);
+  const colSums = boardData.colHints.map(hint => hint.sum);
+  const colVoltorbs = boardData.colHints.map(hint => hint.voltorbCount);
+
+  const postProgress = progress => {
+    self.postMessage({
+      type: "progress",
+      token,
+      result: buildClearResult(
+        progress,
+        probabilities,
+        safePanels,
+        compatibleBoards.length,
+        capped,
+        startTime,
+        "WASM"
+      )
+    });
+  };
+
+  const wasmResult = typeof module.solveBoardWithProgress === "function"
+    ? module.solveBoardWithProgress(
+      boardData.level,
+      panels,
+      rowSums,
+      rowVoltorbs,
+      colSums,
+      colVoltorbs,
+      options.timeout,
+      options.maxBoards,
+      postProgress
+    )
+    : module.solveBoard(
+      boardData.level,
+      panels,
+      rowSums,
+      rowVoltorbs,
+      colSums,
+      colVoltorbs,
+      options.timeout,
+      options.maxBoards
+    );
+
+  const finalResult = buildClearResult(
+    {
+      bestPanel: wasmResult.suggestedPanel,
+      winProbability: wasmResult.winProbability,
+      winProbabilityUpper: wasmResult.winProbabilityUpper,
+      depth: wasmResult.depth,
+      isExact: wasmResult.isExact,
+      reason: wasmResult.reason
+    },
+    probabilities,
+    safePanels,
+    compatibleBoards.length,
+    capped,
+    startTime,
+    "WASM"
+  );
+  self.postMessage({ type: "complete", token, result: finalResult });
+}
+
+function solveCoins(board, token, options) {
+  cancelCurrent = solveCoinProgressive(
+    board,
+    result => self.postMessage({ type: "progress", token, result }),
+    result => self.postMessage({ type: "complete", token, result }),
+    options.maxBoards,
+    { timeout: options.timeout }
+  );
+}
+
+self.addEventListener("message", async event => {
+  if (event.data.type === "preload") {
+    try {
+      await loadWasm();
+      self.postMessage({ type: "wasm-ready" });
+    } catch (error) {
+      self.postMessage({
+        type: "wasm-unavailable",
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    return;
+  }
+
   if (event.data.type !== "solve") return;
 
   cancelCurrent?.();
-  const { token, options } = event.data;
+  cancelCurrent = null;
+
+  const { token, options, goal = "clear" } = event.data;
+  const board = hydrateBoard(event.data.board);
 
   try {
-    const board = hydrateBoard(event.data.board);
-    cancelCurrent = solveProgressive(
-      board,
-      result => self.postMessage({ type: "progress", token, result }),
-      result => self.postMessage({ type: "complete", token, result }),
-      options.maxBoards,
-      { timeout: options.timeout }
-    );
+    if (goal === "coins") {
+      solveCoins(board, token, options);
+      return;
+    }
+
+    try {
+      await solveClearWasm(board, event.data.board, token, options);
+    } catch (wasmError) {
+      solveClearJS(
+        board,
+        token,
+        options,
+        wasmError instanceof Error ? wasmError.message : String(wasmError)
+      );
+    }
   } catch (error) {
     self.postMessage({
       type: "error",

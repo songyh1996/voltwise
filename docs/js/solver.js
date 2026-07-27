@@ -15,6 +15,10 @@ import {
 } from './boardTypes.js';
 
 import { Board } from './board.js';
+import {
+    calculateCurrentPayout,
+    calculateMaximumPayout
+} from './gameProgress.js';
 
 // Check if a board configuration is legal according to type constraints
 export function isLegal(board, params) {
@@ -1106,6 +1110,338 @@ export function solveProgressive(board, onProgress, onComplete, maxBoards = 5000
 
     setTimeout(runNextDepth, 0);
 
+    return () => { cancelled = true; };
+}
+
+/**
+ * Expected maximum board payout under the current Bayesian posterior.
+ * This is a rigorous upper bound for any coin-farming policy because no
+ * continuation can pay more than the completed board's payout.
+ */
+function expectedMaximumPayout(state) {
+    if (state.pBoardNorm <= 0) {
+        return calculateCurrentPayout(state.board.panels);
+    }
+
+    const level = state.board.level;
+    let expected = 0;
+
+    for (let type = 0; type < NUM_TYPES_PER_LEVEL; type++) {
+        const typeBoards = state.boardsByType[type];
+        if (typeBoards.length === 0) continue;
+
+        const nAccepted = Number(getAcceptedCount(level, type));
+        if (nAccepted <= 0) continue;
+
+        const params = getParams(level, type);
+        const posteriorMass = (typeBoards.length / nAccepted) / state.pBoardNorm;
+        expected += posteriorMass * calculateMaximumPayout(params.n2, params.n3);
+    }
+
+    return expected;
+}
+
+function coinLeafBounds(state) {
+    const quitValue = calculateCurrentPayout(state.board.panels);
+    return {
+        bestPanel: null,
+        lower: quitValue,
+        upper: Math.max(quitValue, expectedMaximumPayout(state)),
+        fullyExplored: false,
+        moveProven: false,
+        actionBounds: []
+    };
+}
+
+/**
+ * Rigorous interval branch-and-bound for coin farming.
+ *
+ * The lower bound is the value of a concrete policy: quit at the frontier.
+ * The upper bound is the posterior expected completed-board payout. Chance
+ * nodes preserve both bounds, and decision nodes take their maxima. A move is
+ * certified once its lower bound meets every competing upper bound.
+ */
+function coinBoundsSearch(state, depthLimit, memo, nodesRef, startTime, timeout) {
+    nodesRef.count++;
+
+    if (isWon(state)) {
+        const payout = calculateCurrentPayout(state.board.panels);
+        return {
+            bestPanel: null,
+            lower: payout,
+            upper: payout,
+            fullyExplored: true,
+            moveProven: true,
+            actionBounds: []
+        };
+    }
+
+    if (Date.now() - startTime >= timeout || depthLimit <= 0) {
+        return coinLeafBounds(state);
+    }
+
+    const memoKey = `coin_${state.board.compactKey()}_${depthLimit}`;
+    if (memo.has(memoKey)) return memo.get(memoKey);
+
+    const quitValue = calculateCurrentPayout(state.board.panels);
+    const freePanel = findFreePanel(state);
+    const panels = freePanel ? [freePanel] : getOrderedUnknownPanels(state);
+
+    if (panels.length === 0) {
+        const terminal = {
+            bestPanel: null,
+            lower: quitValue,
+            upper: quitValue,
+            fullyExplored: true,
+            moveProven: true,
+            actionBounds: []
+        };
+        memo.set(memoKey, terminal);
+        return terminal;
+    }
+
+    const candidates = [];
+    for (const pos of panels) {
+        let ceiling = 0;
+        for (let value = 1; value <= 3; value++) {
+            const probability = probabilityOf(state, pos, value);
+            if (probability <= 0) continue;
+            ceiling += probability * expectedMaximumPayout(revealPanel(state, pos, value));
+        }
+        candidates.push({ pos, ceiling });
+    }
+    candidates.sort((a, b) => b.ceiling - a.ceiling);
+
+    let bestPanel = null;
+    let bestLower = quitValue;
+    let stateUpper = quitValue;
+    let fullyExplored = true;
+    const actionBounds = [];
+
+    for (let index = 0; index < candidates.length; index++) {
+        const candidate = candidates[index];
+
+        if (candidate.ceiling <= bestLower + Number.EPSILON) {
+            actionBounds.push({
+                pos: candidate.pos,
+                lower: 0,
+                upper: candidate.ceiling,
+                pruned: true
+            });
+            stateUpper = Math.max(stateUpper, candidate.ceiling);
+            continue;
+        }
+
+        let actionLower = 0;
+        let actionUpper = 0;
+        let actionExplored = true;
+
+        for (let value = 1; value <= 3; value++) {
+            const probability = probabilityOf(state, candidate.pos, value);
+            if (probability <= 0) continue;
+
+            const nextState = revealPanel(state, candidate.pos, value);
+            const child = coinBoundsSearch(
+                nextState,
+                freePanel ? depthLimit : depthLimit - 1,
+                memo,
+                nodesRef,
+                startTime,
+                timeout
+            );
+
+            actionLower += probability * child.lower;
+            actionUpper += probability * child.upper;
+            if (!child.fullyExplored) actionExplored = false;
+        }
+
+        actionBounds.push({
+            pos: candidate.pos,
+            lower: actionLower,
+            upper: actionUpper,
+            pruned: false
+        });
+        stateUpper = Math.max(stateUpper, actionUpper);
+
+        if (actionLower > bestLower + Number.EPSILON) {
+            bestLower = actionLower;
+            bestPanel = candidate.pos;
+        }
+        if (!actionExplored) fullyExplored = false;
+
+        if (Date.now() - startTime >= timeout) {
+            fullyExplored = false;
+            for (let remaining = index + 1; remaining < candidates.length; remaining++) {
+                stateUpper = Math.max(stateUpper, candidates[remaining].ceiling);
+                actionBounds.push({
+                    pos: candidates[remaining].pos,
+                    lower: 0,
+                    upper: candidates[remaining].ceiling,
+                    pruned: false
+                });
+            }
+            break;
+        }
+    }
+
+    const selectedLower = bestPanel
+        ? actionBounds.find(action =>
+            action.pos.row === bestPanel.row && action.pos.col === bestPanel.col
+        )?.lower ?? bestLower
+        : quitValue;
+    const competingUpper = Math.max(
+        bestPanel ? quitValue : 0,
+        ...actionBounds
+            .filter(action =>
+                !bestPanel ||
+                action.pos.row !== bestPanel.row ||
+                action.pos.col !== bestPanel.col
+            )
+            .map(action => action.upper)
+    );
+    const moveProven = Boolean(
+        freePanel ||
+        selectedLower + 1e-9 >= competingUpper
+    );
+
+    const result = {
+        bestPanel,
+        lower: bestLower,
+        upper: Math.max(bestLower, stateUpper),
+        fullyExplored: fullyExplored && Math.abs(stateUpper - bestLower) < 1e-9,
+        moveProven,
+        actionBounds
+    };
+    memo.set(memoKey, result);
+    return result;
+}
+
+export function* iterativeCoinDeepening(board, compatibleBoards, options = {}) {
+    const { maxDepth = 100, timeout = 60000 } = options;
+    const level = board.level;
+    const boardsByType = groupBoardsByType(compatibleBoards, level);
+    const pBoardNorm = calculateProbNorm(boardsByType, level);
+    const initialState = new SearchState(board, boardsByType, pBoardNorm);
+    const startTime = Date.now();
+    const nodesRef = { count: 0 };
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+        const memo = new Map();
+        const result = coinBoundsSearch(
+            initialState,
+            depth,
+            memo,
+            nodesRef,
+            startTime,
+            timeout
+        );
+        const elapsed = Date.now() - startTime;
+
+        yield {
+            bestPanel: result.bestPanel,
+            decision: result.bestPanel ? 'continue' : 'quit',
+            expectedCoinsLower: result.lower,
+            expectedCoinsUpper: result.upper,
+            currentPayout: calculateCurrentPayout(board.panels),
+            depth,
+            isExact: result.fullyExplored,
+            optimalityProven: result.moveProven,
+            nodesSearched: nodesRef.count,
+            elapsed,
+            reason: result.moveProven
+                ? (result.bestPanel ? 'Continue move proven optimal' : 'Quitting proven optimal')
+                : `Coin search depth ${depth}`
+        };
+
+        if (result.moveProven || result.fullyExplored || elapsed >= timeout) break;
+    }
+}
+
+export function solveCoinProgressive(
+    board,
+    onProgress,
+    onComplete,
+    maxBoards = 500000,
+    options = {}
+) {
+    const { timeout = 60000 } = options;
+    const startTime = performance.now();
+    const compatibleBoards = generateCompatibleBoards(board, maxBoards);
+    const capped = compatibleBoards.length >= maxBoards;
+
+    if (compatibleBoards.length === 0) {
+        onComplete({
+            goal: 'coins',
+            decision: null,
+            suggestedPanel: null,
+            expectedCoinsLower: 0,
+            expectedCoinsUpper: 0,
+            currentPayout: calculateCurrentPayout(board.panels),
+            probabilities: { panels: [], typeProbs: [], totalCompatible: 0 },
+            safePanels: [],
+            compatibleCount: 0,
+            capped: false,
+            computeTime: performance.now() - startTime,
+            depth: 0,
+            isExact: true,
+            optimalityProven: false,
+            reason: 'No compatible boards'
+        });
+        return () => {};
+    }
+
+    const probabilities = calculateProbabilities(board, compatibleBoards);
+    const safePanels = findSafePanels(board, compatibleBoards);
+    const generator = iterativeCoinDeepening(board, compatibleBoards, { timeout });
+    let cancelled = false;
+    let lastResult = null;
+
+    function buildResult(progress) {
+        return {
+            goal: 'coins',
+            decision: progress.decision,
+            suggestedPanel: progress.bestPanel,
+            expectedCoinsLower: progress.expectedCoinsLower,
+            expectedCoinsUpper: progress.expectedCoinsUpper,
+            currentPayout: progress.currentPayout,
+            probabilities,
+            safePanels,
+            compatibleCount: compatibleBoards.length,
+            capped,
+            computeTime: performance.now() - startTime,
+            depth: progress.depth,
+            isExact: progress.isExact,
+            optimalityProven: progress.optimalityProven && !capped,
+            engine: 'JavaScript B&B',
+            reason: progress.reason
+        };
+    }
+
+    function runNextDepth() {
+        if (cancelled) return;
+
+        const { value, done } = generator.next();
+        if (done || !value) {
+            if (lastResult) onComplete(lastResult);
+            return;
+        }
+
+        lastResult = buildResult(value);
+        onProgress(lastResult);
+
+        if (
+            value.optimalityProven ||
+            value.isExact ||
+            performance.now() - startTime >= timeout
+        ) {
+            onComplete(lastResult);
+            return;
+        }
+
+        setTimeout(runNextDepth, 0);
+    }
+
+    setTimeout(runNextDepth, 0);
     return () => { cancelled = true; };
 }
 

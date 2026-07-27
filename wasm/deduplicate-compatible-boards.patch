@@ -1,0 +1,49 @@
+diff --git a/src/solver.cpp b/src/solver.cpp
+index 20d0648..8af58dc 100644
+--- a/src/solver.cpp
++++ b/src/solver.cpp
+@@ -6,5 +6,7 @@
+-
++
+ #include <algorithm>
+ #include <cmath>
++#include <string>
++#include <unordered_set>
+-
++
+ namespace voltorb {
+@@ -81,12 +83,29 @@ std::optional<SearchState> Solver::initializeSearch(const Board& board) {
+     // Generate all compatible boards
+     allBoards_.clear();
+     size_t boardCount = 0;
+-
++    std::unordered_set<std::string> seenBoards;
++    seenBoards.reserve(options_.maxCompatibleBoards);
++
+     CompatibleBoardGenerator::generateAllTypes(
+         board, [&](const Board& b) {
+-            allBoards_.push_back(b);
+-            boardCount++;
+-            return boardCount <= options_.maxCompatibleBoards;
++            std::string key;
++            key.reserve(TOTAL_PANELS);
++            for (size_t row = 0; row < BOARD_SIZE; row++) {
++                for (size_t col = 0; col < BOARD_SIZE; col++) {
++                    key.push_back(static_cast<char>(
++                        static_cast<int>(b.get(
++                            static_cast<uint8_t>(row),
++                            static_cast<uint8_t>(col))) + 1));
++                }
++            }
++
++            if (seenBoards.insert(std::move(key)).second) {
++                if (boardCount >= options_.maxCompatibleBoards) return false;
++                allBoards_.push_back(b);
++                boardCount++;
++            }
++
++            return boardCount < options_.maxCompatibleBoards;
+         });
+-
++
+     if (allBoards_.empty()) {

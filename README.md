@@ -9,10 +9,20 @@ Compared with the calculator at voltorbflip.com, this version adds:
 - level-aware board generation for Levels 1–8;
 - Bayesian weighting across the game’s ten board types per level;
 - per-panel Voltorb, 1, 2, and 3 probabilities;
-- multi-step search aimed at whole-board clear probability;
+- a 60-second WebAssembly branch-and-bound search aimed at whole-board clear
+  probability, with a JavaScript fallback;
+- proof-gated results: “optimal move proven” appears only after the search
+  closes its bounds (or proves that a panel is guaranteed safe);
+- an optional Coins goal that compares continuing with banking the current
+  payout and can recommend quitting;
 - visible warnings when the clues force a gamble;
-- undo, input validation, keyboard-friendly clue entry, and a responsive UI;
-- a Web Worker so deeper analysis does not freeze the interface.
+- automatic board reset after wins and losses, with next-level progression
+  after a win;
+- constraint-aware reveal entry that disables impossible values while keeping
+  every recorded tile editable;
+- undo, input validation, rapid keyboard clue entry, and a responsive UI;
+- a replaceable Web Worker so a new board state immediately cancels stale
+  deep work.
 
 ## Run locally
 
@@ -30,8 +40,20 @@ npm test
 
 The app has no runtime dependencies and sends no board data to a server.
 
+## Rebuild the WASM engine
+
+The checked-in browser assets are reproducibly built from the upstream commit
+pinned in `scripts/build-wasm.sh`. With an Emscripten SDK installed:
+
+```bash
+EMSDK=/path/to/emsdk bash scripts/build-wasm.sh
+```
+
+The local patch deduplicates compatible physical boards before Bayesian
+weighting.
+
 ## Solver note
 
-The JavaScript solver core is derived from Giovanni Maria Tomaselli’s
-MIT-licensed `GimmyTomas/voltorb-flip` project. See
+The JavaScript and WebAssembly solver cores are derived from Giovanni Maria
+Tomaselli’s MIT-licensed `GimmyTomas/voltorb-flip` project. See
 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).
